@@ -1,0 +1,50 @@
+const mongoose = require('mongoose');
+const { jobStatus, jobStep } = require('../const/options');
+const variables = require('../const/variables');
+
+const jobSchema = new mongoose.Schema({
+  videoId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Video',
+    required: true,
+    index: true,
+  },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    index: true,
+  },
+  status: {
+    type: String,
+    enum: jobStatus,
+    default: variables.PENDING,
+    index: true,
+  },
+  step: {
+    type: String,
+    enum: jobStep,
+    required: true,
+  },
+  retries: {
+    type: Number,
+    default: 0,
+  },
+  type: {
+    type: String,
+    required: true,
+  },
+  error: {
+    type: String,
+    default: null,
+  },
+}, {
+  timestamps: true,
+});
+
+jobSchema.index({ videoId: 1, createdAt: -1 });
+jobSchema.index({ userId: 1, status: 1 });
+jobSchema.index({ status: 1, step: 1 });
+
+module.exports = mongoose.model('Job', jobSchema);
+
