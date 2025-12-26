@@ -1,5 +1,5 @@
 const { Video } = require("../models");
-const { getFile } = require("../utils/s3");
+const { getFile } = require("../utils/r2");
 const { extractAudio } = require("../utils/extractAudio");
 
 const streamToBuffer = async (stream) => {

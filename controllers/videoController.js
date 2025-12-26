@@ -1,4 +1,4 @@
-const { uploadFile } = require('../utils/s3');
+const { uploadFile } = require('../utils/r2');
 const { sendSuccess, sendError } = require('../utils/response');
 const variables = require('../const/variables');
 const { getVideoDuration } = require('../utils/video');
@@ -12,8 +12,10 @@ const videoController = {
         return sendError(res, 'No file uploaded', 400);
       }
 
+      let duration = 0;
+
       if (req.file.mimetype.startsWith('video/')) {
-        const duration = await getVideoDuration(req.file.buffer);
+        duration = await getVideoDuration(req.file.buffer);
         const maxDuration = 60;
 
         if (duration > maxDuration) {
@@ -29,6 +31,7 @@ const videoController = {
       const { targetLanguage, selectedVoice } = req.body;
       const directory = `${variables.VIDOES}/${user._id}`;
       const fileName = req.file.originalname.replace(/\.[^/.]+$/, '') || null;
+      const videoTitle = req.body.title || fileName || null;
 
       const uploadResult = await uploadFile(req.file, directory, fileName);
       if(!uploadResult) {
@@ -39,8 +42,8 @@ const videoController = {
         userId: user._id,
         inputVideo: {
           s3Key: uploadResult.key,
-          durationSec: duration,
-          format: req.file.mimetype,
+          durationSec: Math.ceil(duration),
+          format: req.file.mimetype.split('/')[1] || req.file.originalname.split('.').pop() || 'mp4',
         },
         targetLanguage,
         selectedVoice,

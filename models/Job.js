@@ -24,7 +24,6 @@ const jobSchema = new mongoose.Schema({
   step: {
     type: String,
     enum: jobStep,
-    required: true,
   },
   retries: {
     type: Number,
