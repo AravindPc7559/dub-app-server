@@ -60,6 +60,10 @@ const videoSchema = new mongoose.Schema({
       type: String,
       default: null,
     },
+    tts: {
+      type: String,
+      default: null,
+    },
   },
   ai: {
     sourceLanguage: {

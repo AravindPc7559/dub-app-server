@@ -12,6 +12,9 @@ const {
   updateVideoWithTranscription,
   uploadRewrittenScript,
   updateVideoWithRewrittenScript,
+  generateTTSForSegments,
+  uploadTTSAudio,
+  updateVideoWithTTSAudio,
 } = require("../utils/videoJob.utils");
 const variables = require("../const/variables");
 const { translateSegments } = require("../services/gptTranslate.service");
@@ -23,26 +26,26 @@ const { LANGUAGE_MAP } = require("../const/openAiLanguages");
  */
 const processVideoJob = async (job) => {
   const { videoId, userId } = job;
-  
+
   // Get all file paths
   const { audioFilePath, demucsOutputDir, baseName } = getVideoPaths(videoId);
   
   try {
     // 1. Load and validate video
-    const video = await Video.findById(videoId);
-    if (!video) {
+  const video = await Video.findById(videoId);
+  if (!video) {
       throw new Error(`Video not found: ${videoId}`);
-    }
+  }
 
     // Update video status to processing
     video.status = variables.PROCESSING;
     await video.save();
 
     // 2. Download video from R2
-    const { s3Key } = video.inputVideo;
+  const { s3Key } = video.inputVideo;
     const videoBuffer = await downloadVideo(s3Key);
     console.log('Video downloaded from R2');
-    
+
     // 3. Extract audio from video
     const audioBuffer = await extractAudio(videoBuffer, 'wav');
     console.log('Audio extracted from video');
@@ -75,13 +78,12 @@ const processVideoJob = async (job) => {
       videoId,
       video.videoLanguage || null
     );
-    console.log('Audio transcription completed', transcription);
+    console.log('Audio transcription completed');
 
     // 9. Update database with transcription
     await updateVideoWithTranscription(video, transcription);
 
-    if(transcription?.segments){
-      // 10. Translate and rewrite script
+    if (transcription?.segments) {
       const rewrittenScript = await translateSegments({
         segments: transcription?.segments,
         videoLanguage: LANGUAGE_MAP[video?.videoLanguage],
@@ -98,8 +100,16 @@ const processVideoJob = async (job) => {
 
       // 12. Update database with rewritten script key
       await updateVideoWithRewrittenScript(video, scriptUploadResult);
+  
+      // 13. Generate TTS audio for rewritten script segments and save locally
+      const voice = video.selectedVoice || 'alloy';
+      const ttsResults = await generateTTSForSegments(rewrittenScript, videoId, voice);
+      console.log('TTS audio generated and saved locally for all segments');
+      
+      // TTS files are now saved in tmp/tts/{videoId}/segment-{index}.wav
+      // You can do additional processing here before uploading to R2
     }
-    
+
   } catch (err) {
     console.error('Error processing video job:', err);
     throw err;

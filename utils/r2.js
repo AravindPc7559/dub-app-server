@@ -105,8 +105,6 @@ const getFile = async (key) => {
       Key: key,
     });
 
-    console.log('Getting file', key, process.env.R2_ENDPOINT);
-
     const response = await getR2Client().send(command);
     return response;
   } catch (error) {

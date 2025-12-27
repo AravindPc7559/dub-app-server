@@ -17,12 +17,8 @@ const translateSegments = async ({
   videoLanguage,
   targetLanguage
 }) => {
-  console.log('videoLanguage', videoLanguage);
-  console.log('targetLanguage', targetLanguage);
   const isTranslationNeeded = videoLanguage && targetLanguage && 
                                videoLanguage.toLowerCase() !== targetLanguage.toLowerCase();
-
-  console.log('isTranslationNeeded', isTranslationNeeded);
 
   const prompt = `
   You are a professional video dubbing writer who specializes in making scripts sound

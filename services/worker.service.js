@@ -12,24 +12,24 @@ const startWorker = async () => {
     try {
       // Atomically lock and fetch a pending job
       job = await Job.findOneAndUpdate(
-        {
+      {
           status: JOB_STATUS.PENDING,
-          $or: [
-            { lockedAt: null },
-            { lockedAt: { $lt: new Date(Date.now() - LOCK_TIMEOUT) } }
-          ]
-        },
-        {
+        $or: [
+          { lockedAt: null },
+          { lockedAt: { $lt: new Date(Date.now() - LOCK_TIMEOUT) } }
+        ]
+      },
+      {
           $set: {
             status: JOB_STATUS.RUNNING,
-            lockedAt: new Date(),
+        lockedAt: new Date(),
           },
-          $inc: { attempts: 1 }
-        },
+        $inc: { attempts: 1 }
+      },
         { new: true, sort: { createdAt: 1 } } // Process oldest jobs first
-      );
+    );
 
-      if (!job) {
+    if (!job) {
         await sleep(POLL_INTERVAL);
         continue;
       }
@@ -42,8 +42,8 @@ const startWorker = async () => {
         job.error = 'Video not found';
         job.lockedAt = null;
         await job.save();
-        continue;
-      }
+      continue;
+    }
 
       // Update video status to PROCESSING
       await updateVideoStatus(job.videoId, VIDEO_STATUS.PROCESSING);
