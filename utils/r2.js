@@ -2,17 +2,49 @@ const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListO
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { v4: uuidv4 } = require('uuid');
 
-const r2Client = new S3Client({
-  region: 'auto',
-  endpoint: process.env.R2_ENDPOINT,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-  },
-});
+// Validate R2 configuration
+const validateR2Config = () => {
+  const requiredVars = {
+    R2_ENDPOINT: process.env.R2_ENDPOINT,
+    R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID,
+    R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY,
+    R2_BUCKET_NAME: process.env.R2_BUCKET_NAME,
+  };
 
-const BUCKET_NAME = process.env.R2_BUCKET_NAME;
-const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
+  const missing = Object.entries(requiredVars)
+    .filter(([key, value]) => !value || (typeof value === 'string' && value.trim() === ''))
+    .map(([key]) => key);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing required R2 environment variables: ${missing.join(', ')}`);
+  }
+};
+
+// Lazy initialization of R2 client
+let r2Client = null;
+const getR2Client = () => {
+  if (!r2Client) {
+    validateR2Config();
+    r2Client = new S3Client({
+      region: 'auto',
+      endpoint: process.env.R2_ENDPOINT,
+      credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+      },
+    });
+  }
+  return r2Client;
+};
+
+const getBucketName = () => {
+  validateR2Config();
+  return process.env.R2_BUCKET_NAME;
+};
+
+const getR2PublicUrl = () => {
+  return process.env.R2_PUBLIC_URL || `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
+};
 
 const uploadFile = async (file, directory = '', fileName = null) => {
   try {
@@ -22,18 +54,18 @@ const uploadFile = async (file, directory = '', fileName = null) => {
       : `${directory}/${uuidv4()}.${fileExtension}`;
 
     const command = new PutObjectCommand({
-      Bucket: BUCKET_NAME,
+      Bucket: getBucketName(),
       Key: key,
       Body: file.buffer,
       ContentType: file.mimetype,
     });
 
-    await r2Client.send(command);
+    await getR2Client().send(command);
 
     return {
       key,
-      url: `${R2_PUBLIC_URL}/${key}`,
-      bucket: BUCKET_NAME,
+      url: `${getR2PublicUrl()}/${key}`,
+      bucket: getBucketName(),
     };
   } catch (error) {
     throw new Error(`R2 upload failed: ${error.message}`);
@@ -48,18 +80,18 @@ const uploadFileFromBuffer = async (buffer, mimetype, directory = '', fileName =
       : `${directory}/${uuidv4()}.${fileExtension}`;
 
     const command = new PutObjectCommand({
-      Bucket: BUCKET_NAME,
+      Bucket: getBucketName(),
       Key: key,
       Body: buffer,
       ContentType: mimetype,
     });
 
-    await r2Client.send(command);
+    await getR2Client().send(command);
 
     return {
       key,
-      url: `${R2_PUBLIC_URL}/${key}`,
-      bucket: BUCKET_NAME,
+      url: `${getR2PublicUrl()}/${key}`,
+      bucket: getBucketName(),
     };
   } catch (error) {
     throw new Error(`R2 upload failed: ${error.message}`);
@@ -69,13 +101,19 @@ const uploadFileFromBuffer = async (buffer, mimetype, directory = '', fileName =
 const getFile = async (key) => {
   try {
     const command = new GetObjectCommand({
-      Bucket: BUCKET_NAME,
+      Bucket: getBucketName(),
       Key: key,
     });
 
-    const response = await r2Client.send(command);
+    console.log('Getting file', key, process.env.R2_ENDPOINT);
+
+    const response = await getR2Client().send(command);
     return response;
   } catch (error) {
+    // Provide more detailed error information
+    if (error.message.includes('credential') || error.message.includes('credentials')) {
+      throw new Error(`R2 get file failed: Invalid R2 credentials. Please check R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY environment variables. Original error: ${error.message}`);
+    }
     throw new Error(`R2 get file failed: ${error.message}`);
   }
 };
@@ -83,11 +121,11 @@ const getFile = async (key) => {
 const getSignedUrlForFile = async (key, expiresIn = 3600) => {
   try {
     const command = new GetObjectCommand({
-      Bucket: BUCKET_NAME,
+      Bucket: getBucketName(),
       Key: key,
     });
 
-    const signedUrl = await getSignedUrl(r2Client, command, { expiresIn });
+    const signedUrl = await getSignedUrl(getR2Client(), command, { expiresIn });
     return signedUrl;
   } catch (error) {
     throw new Error(`R2 signed URL generation failed: ${error.message}`);
@@ -97,11 +135,11 @@ const getSignedUrlForFile = async (key, expiresIn = 3600) => {
 const deleteFile = async (key) => {
   try {
     const command = new DeleteObjectCommand({
-      Bucket: BUCKET_NAME,
+      Bucket: getBucketName(),
       Key: key,
     });
 
-    await r2Client.send(command);
+    await getR2Client().send(command);
     return { success: true, key };
   } catch (error) {
     throw new Error(`R2 delete failed: ${error.message}`);
@@ -122,12 +160,12 @@ const listFiles = async (directory = '', maxKeys = 1000) => {
   try {
     const prefix = directory ? `${directory}/` : '';
     const command = new ListObjectsV2Command({
-      Bucket: BUCKET_NAME,
+      Bucket: getBucketName(),
       Prefix: prefix,
       MaxKeys: maxKeys,
     });
 
-    const response = await r2Client.send(command);
+    const response = await getR2Client().send(command);
     return response.Contents || [];
   } catch (error) {
     throw new Error(`R2 list files failed: ${error.message}`);

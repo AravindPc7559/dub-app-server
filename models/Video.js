@@ -28,6 +28,11 @@ const videoSchema = new mongoose.Schema({
     required: true,
     default: 'en',
   },
+  videoLanguage: {
+    type: String,
+    default: 'en',
+    required: true,
+  },
   selectedVoice: {
     type: String,
     default: 'auto',

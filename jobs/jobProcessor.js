@@ -4,7 +4,7 @@ const { processVideoJob } = require('./videoJobHandler');
 const processJob = async (job) => {
   switch (job.type) {
     case variables.VIDEO_PROCESS:
-      return processVideoJob(job);
+      return await processVideoJob(job);
     default:
       throw new Error(`Unknown job type: ${job.type}`);
   }

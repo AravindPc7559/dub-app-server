@@ -1,47 +1,69 @@
-import { processJob } from '../jobs/jobProcessor.js';
-import Job from '../models/Job.js';
+const { processJob } = require('../jobs/jobProcessor');
+const { Job, Video } = require('../models');
+const { LOCK_TIMEOUT, POLL_INTERVAL, JOB_STATUS, VIDEO_STATUS } = require('../const/worker.constants');
+const { sleep, updateVideoStatus, handleJobFailure, handleJobSuccess } = require('../utils/worker.utils');
 
-const LOCK_TIMEOUT = 5 * 60 * 1000;
-
-export const startWorker = async () => {
+const startWorker = async () => {
   console.log('Worker started');
 
   while (true) {
-    const job = await Job.findOneAndUpdate(
-      {
-        status: 'PENDING',
-        $or: [
-          { lockedAt: null },
-          { lockedAt: { $lt: new Date(Date.now() - LOCK_TIMEOUT) } }
-        ]
-      },
-      {
-        status: 'PROCESSING',
-        lockedAt: new Date(),
-        $inc: { attempts: 1 }
-      },
-      { new: true }
-    );
-
-    if (!job) {
-      console.log('No job found, sleeping for 3 seconds');
-      await sleep(3000);
-      continue;
-    }
-
+    let job = null;
+    
     try {
-      await processJob(job);
-      job.status = 'COMPLETED';
-      job.error = null;
-    } catch (err) {
-      job.error = err.message;
-      job.status =
-        job.attempts >= job.maxAttempts ? 'FAILED' : 'PENDING';
-      job.lockedAt = null;
-    }
+      // Atomically lock and fetch a pending job
+      job = await Job.findOneAndUpdate(
+        {
+          status: JOB_STATUS.PENDING,
+          $or: [
+            { lockedAt: null },
+            { lockedAt: { $lt: new Date(Date.now() - LOCK_TIMEOUT) } }
+          ]
+        },
+        {
+          $set: {
+            status: JOB_STATUS.RUNNING,
+            lockedAt: new Date(),
+          },
+          $inc: { attempts: 1 }
+        },
+        { new: true, sort: { createdAt: 1 } } // Process oldest jobs first
+      );
 
-    await job.save();
+      if (!job) {
+        await sleep(POLL_INTERVAL);
+        continue;
+      }
+
+      // Verify video exists before processing
+      const video = await Video.findById(job.videoId);
+      if (!video) {
+        console.error(`Video not found for job ${job._id}, videoId: ${job.videoId}`);
+        job.status = JOB_STATUS.FAILED;
+        job.error = 'Video not found';
+        job.lockedAt = null;
+        await job.save();
+        continue;
+      }
+
+      // Update video status to PROCESSING
+      await updateVideoStatus(job.videoId, VIDEO_STATUS.PROCESSING);
+
+      // Process the job
+      await processJob(job);
+      
+      // Job completed successfully
+      await handleJobSuccess(job);
+      
+    } catch (err) {
+      console.error('Job processing error:', err);
+      
+      if (job) {
+        await handleJobFailure(job, err);
+      }
+    }
   }
 };
 
-const sleep = ms => new Promise(res => setTimeout(res, ms));
+module.exports = {
+  startWorker,
+};

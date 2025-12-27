@@ -37,6 +37,18 @@ const jobSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  lockedAt: {
+    type: Date,
+    default: null,
+  },
+  attempts: {
+    type: Number,
+    default: 0,
+  },
+  maxAttempts: {
+    type: Number,
+    default: 3,
+  },
 }, {
   timestamps: true,
 });
@@ -44,6 +56,7 @@ const jobSchema = new mongoose.Schema({
 jobSchema.index({ videoId: 1, createdAt: -1 });
 jobSchema.index({ userId: 1, status: 1 });
 jobSchema.index({ status: 1, step: 1 });
+jobSchema.index({ status: 1, lockedAt: 1 });
 
 module.exports = mongoose.model('Job', jobSchema);
 

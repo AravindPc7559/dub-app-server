@@ -28,7 +28,7 @@ const videoController = {
       }
 
       const user = req.user;
-      const { targetLanguage, selectedVoice } = req.body;
+      const { targetLanguage, selectedVoice, videoLanguage } = req.body;
       const directory = `${variables.VIDOES}/${user._id}`;
       const fileName = req.file.originalname.replace(/\.[^/.]+$/, '') || null;
       const videoTitle = req.body.title || fileName || null;
@@ -47,6 +47,7 @@ const videoController = {
         },
         targetLanguage,
         selectedVoice,
+        videoLanguage,
         status: variables.PENDING,
       })
 
