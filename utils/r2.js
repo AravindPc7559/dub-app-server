@@ -90,7 +90,7 @@ const uploadFileFromBuffer = async (buffer, mimetype, directory = '', fileName =
 
     return {
       key,
-      url: `${getR2PublicUrl()}/${key}`,
+      url: `${getR2PublicUrl()}${key}`,
       bucket: getBucketName(),
     };
   } catch (error) {

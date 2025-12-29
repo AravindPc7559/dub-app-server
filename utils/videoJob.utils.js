@@ -87,22 +87,27 @@ const readSeparatedAudioFiles = (vocalsPath, backgroundPath) => {
  * @param {string} demucsOutputDir - Demucs output directory
  * @param {string} baseName - Base name of the audio file (without extension)
  */
-const cleanupTempFiles = (audioFilePath, demucsOutputDir, baseName) => {
-  try {
-    // Remove original audio file
-    if (fs.existsSync(audioFilePath)) {
-      fs.unlinkSync(audioFilePath);
-    }
+async function cleanupTempFiles(jobId) {
+  const folders = [
+    path.join("tmp", "tts", jobId),
+    path.join("tmp", "htdemucs", "htdemucs", `${jobId}_audio`),
+    path.join("tmp", "final", jobId),
+  ];
 
-    // Remove demucs output directory for this specific video
-    const demucsVideoDir = path.join(demucsOutputDir, 'htdemucs', baseName);
-    if (fs.existsSync(demucsVideoDir)) {
-      removeDirectory(demucsVideoDir);
-    }
-  } catch (err) {
-    console.warn('Failed to clean up temporary files:', err.message);
-  }
-};
+  await Promise.all(
+    folders.map(async (folderPath) => {
+      try {
+        await fs.promises.rm(folderPath, {
+          recursive: true,
+          force: true,
+        });
+        console.log(`✅ Deleted: ${folderPath}`);
+      } catch (err) {
+        console.error(`❌ Failed to delete ${folderPath}`, err);
+      }
+    })
+  );
+}
 
 /**
  * Download video from R2 and convert to buffer
@@ -123,23 +128,21 @@ const downloadVideo = async (s3Key) => {
 const processAudioSeparation = async (audioFilePath, demucsOutputDir) => {
   // Validate audio duration before processing
   const { getAudioDuration } = require('./video');
-  const MIN_AUDIO_DURATION = 1.0; // Minimum 1 second for Demucs
-  
+  const MIN_AUDIO_DURATION = 1.0;
+
   try {
     const duration = await getAudioDuration(audioFilePath);
-    console.log(`Audio duration: ${duration.toFixed(2)} seconds`);
-    
-    if (duration < MIN_AUDIO_DURATION) {
+
+    if (duration && duration < MIN_AUDIO_DURATION) {
       throw new Error(
-        `Audio is too short (${duration.toFixed(2)}s) for Demucs processing. ` +
+        `Audio is too short for Demucs processing. `+
         `Minimum duration required is ${MIN_AUDIO_DURATION} seconds.`
       );
     }
   } catch (err) {
-    // If we can't get duration, log warning but continue (Demucs will fail with better error)
-    console.warn(`Could not validate audio duration: ${err.message}`);
+    throw new Error(err)
   }
-  
+
   const { vocalsPath, backgroundPath } = await runDemucs(audioFilePath, demucsOutputDir);
   return readSeparatedAudioFiles(vocalsPath, backgroundPath);
 };
@@ -154,15 +157,19 @@ const processAudioSeparation = async (audioFilePath, demucsOutputDir) => {
  * @returns {Promise<Object>} Upload results with keys
  */
 const uploadAudioFiles = async (originalBuffer, vocalsBuffer, backgroundBuffer, userId, videoId) => {
-  const audioDir = `extracted-audio/${userId}/${videoId}`;
-  
-  const [originalAudio, vocalsAudio, backgroundAudio] = await Promise.all([
-    uploadFileFromBuffer(originalBuffer, 'audio/wav', audioDir, 'original'),
-    uploadFileFromBuffer(vocalsBuffer, 'audio/mpeg', audioDir, 'vocals'),
-    uploadFileFromBuffer(backgroundBuffer, 'audio/mpeg', audioDir, 'background')
-  ]);
+  try {
+    const audioDir = `extracted-audio/${userId}/${videoId}`;
 
-  return { originalAudio, vocalsAudio, backgroundAudio };
+    const [originalAudio, vocalsAudio, backgroundAudio] = await Promise.all([
+      uploadFileFromBuffer(originalBuffer, 'audio/wav', audioDir, 'original'),
+      uploadFileFromBuffer(vocalsBuffer, 'audio/mpeg', audioDir, 'vocals'),
+      uploadFileFromBuffer(backgroundBuffer, 'audio/mpeg', audioDir, 'background')
+    ]);
+  
+    return { originalAudio, vocalsAudio, backgroundAudio };
+  } catch (error) {
+    throw new Error(error)
+  }
 };
 
 /**
@@ -175,32 +182,27 @@ const uploadAudioFiles = async (originalBuffer, vocalsBuffer, backgroundBuffer, 
 const transcribeVocalsAudio = async (vocalsBuffer, videoId, language = null) => {
   const tmpDir = path.join(__dirname, '../tmp');
   const vocalsTempPath = path.join(tmpDir, `${videoId}_vocals_temp.mp3`);
-  
+
   try {
     // Save vocals buffer to temporary file
     fs.mkdirSync(tmpDir, { recursive: true });
     fs.writeFileSync(vocalsTempPath, vocalsBuffer);
-    
+
     // Transcribe using Whisper (uses language if provided and supported, otherwise auto-detects)
     const transcription = await transcribeAudio(vocalsTempPath, language);
     console.log('Audio transcription completed');
-    
+
     // Normalize segments if they exist
     if (transcription.segments && Array.isArray(transcription.segments)) {
       transcription.segments = normalizeSegments(transcription.segments);
     }
-    
+
     return transcription;
   } catch (err) {
     console.error('Transcription failed:', err.message);
     throw err;
-  } finally {
-    // Clean up temp file
-    if (fs.existsSync(vocalsTempPath)) {
-      fs.unlinkSync(vocalsTempPath);
-      console.log(`Removed temp vocals file: ${vocalsTempPath}`);
-    }
   }
+
 };
 
 /**
@@ -209,12 +211,13 @@ const transcribeVocalsAudio = async (vocalsBuffer, videoId, language = null) => 
  * @param {Object} uploadResults - Upload results with audio keys
  */
 const updateVideoWithAudioKeys = async (video, uploadResults) => {
-  const { originalAudio, vocalsAudio, backgroundAudio } = uploadResults;
-  
-  if (originalAudio?.key && vocalsAudio?.key && backgroundAudio?.key) {
+  const { originalAudio, vocalsAudio, backgroundAudio, tts } = uploadResults;
+
+  if (originalAudio?.key && vocalsAudio?.key && backgroundAudio?.key && tts.key) {
     video.audio.original = originalAudio.key;
     video.audio.voice = vocalsAudio.key;
     video.audio.background = backgroundAudio.key;
+    video.audio.tts = tts.key
     await video.save();
     console.log('Database updated with audio keys');
   } else {
@@ -231,13 +234,17 @@ const updateVideoWithAudioKeys = async (video, uploadResults) => {
  * @param {Object} transcription - Whisper transcription result
  */
 const updateVideoWithTranscription = async (video, transcription) => {
-  if (transcription && transcription.text) {
-    video.ai.whisperOutput = transcription.text;
-    if (transcription.language) {
-      video.ai.sourceLanguage = transcription.language;
+  try {
+    if (transcription && transcription.text) {
+      video.ai.whisperOutput = transcription.text;
+      if (transcription.language) {
+        video.ai.sourceLanguage = transcription.language;
+      }
+      await video.save();
+      console.log('Database updated with transcription');
     }
-    await video.save();
-    console.log('Database updated with transcription');
+  } catch (error) {
+    throw new Error(error)
   }
 };
 
@@ -249,21 +256,25 @@ const updateVideoWithTranscription = async (video, transcription) => {
  * @returns {Promise<Object>} Upload result with key
  */
 const uploadRewrittenScript = async (rewrittenScript, userId, videoId) => {
-  // Convert rewrittenScript array to JSON buffer
-  const scriptJson = JSON.stringify(rewrittenScript, null, 2);
-  const scriptBuffer = Buffer.from(scriptJson, 'utf-8');
-  
-  // Upload to R2
-  const scriptDir = `scripts/${userId}/${videoId}`;
-  const uploadedScript = await uploadFileFromBuffer(
-    scriptBuffer,
-    'application/json',
-    scriptDir,
-    'rewritten-script'
-  );
-  
-  console.log('Rewritten script uploaded to R2');
-  return uploadedScript;
+  try {
+    // Convert rewrittenScript array to JSON buffer
+    const scriptJson = JSON.stringify(rewrittenScript, null, 2);
+    const scriptBuffer = Buffer.from(scriptJson, 'utf-8');
+
+    // Upload to R2
+    const scriptDir = `scripts/${userId}/${videoId}`;
+    const uploadedScript = await uploadFileFromBuffer(
+      scriptBuffer,
+      'application/json',
+      scriptDir,
+      'rewritten-script'
+    );
+
+    console.log('Rewritten script uploaded to R2');
+    return uploadedScript;
+  } catch (error) {
+    throw new Error(error)
+  }
 };
 
 /**
@@ -293,22 +304,22 @@ const generateTTSForSegments = async (rewrittenScript, videoId, voice = 'alloy')
   const videoIdStr = videoId?.toString ? videoId.toString() : String(videoId);
   const ttsDir = path.join(__dirname, '../tmp/tts', videoIdStr);
   fs.mkdirSync(ttsDir, { recursive: true });
-  
+
   console.log(`Generating TTS for ${rewrittenScript.length} segments with voice: ${voice}`);
   console.log(`Saving TTS files to: ${ttsDir}`);
-  
+
   const ttsPromises = rewrittenScript.map(async (segment, index) => {
     try {
       const audioBuffer = await generateTTSBuffer({
         text: segment.text,
         voice
       });
-      
+
       // Save to local file
       const fileName = `segment-${index}.wav`;
       const filePath = path.join(ttsDir, fileName);
       fs.writeFileSync(filePath, audioBuffer);
-      
+
       console.log(`TTS generated and saved for segment ${index + 1}/${rewrittenScript.length}: ${filePath}`);
       return {
         segmentIndex: index,
@@ -318,7 +329,7 @@ const generateTTSForSegments = async (rewrittenScript, videoId, voice = 'alloy')
       };
     } catch (err) {
       console.error(`Failed to generate TTS for segment ${index + 1}:`, err.message);
-      throw err;
+      throw new Error(err);
     }
   });
 
@@ -347,9 +358,9 @@ const getTTSDirectory = (videoId) => {
  */
 const uploadTTSAudio = async (ttsResults, userId, videoId) => {
   const ttsDir = `tts-audio/${userId}/${videoId}`;
-  
+
   console.log(`Uploading ${ttsResults.length} TTS audio files to R2`);
-  
+
   const uploadPromises = ttsResults.map(async (result) => {
     // Read the file from local storage
     const audioBuffer = fs.readFileSync(result.filePath);
@@ -369,7 +380,7 @@ const uploadTTSAudio = async (ttsResults, userId, videoId) => {
 
   const uploadResults = await Promise.all(uploadPromises);
   console.log('All TTS audio files uploaded to R2');
-  
+
   return uploadResults;
 };
 
@@ -378,13 +389,12 @@ const uploadTTSAudio = async (ttsResults, userId, videoId) => {
  * @param {Object} video - Video document
  * @param {Array} uploadResults - Upload results with TTS audio keys
  */
-const updateVideoWithTTSAudio = async (video, uploadResults) => {
-  if (uploadResults && uploadResults.length > 0) {
-    // Store the first TTS audio key (or we could store all keys in an array)
-    // For now, storing the first one. You might want to store all keys in an array field
-    video.audio.tts = uploadResults[0].key;
+const updateVideoWithTTSAudio = async (video, uploadResult) => {
+  if (uploadResult) {
+    video.outputVideo.downloadUrl = uploadResult.url;
+    video.outputVideo.s3Key = uploadResult.key;
     await video.save();
-    console.log(`Database updated with TTS audio key (${uploadResults.length} segments)`);
+    console.log(`Database updated with TTS audio key (${uploadResult.length} segments)`);
   } else {
     throw new Error('No TTS audio files to update');
   }

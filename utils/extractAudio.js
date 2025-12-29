@@ -5,6 +5,7 @@ const { Readable, PassThrough } = require('stream');
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const extractAudio = async (videoBuffer, outputFormat = 'wav') => {
+ try {
   return new Promise((resolve, reject) => {
     const audioChunks = [];
     const videoStream = Readable.from(videoBuffer);
@@ -37,6 +38,9 @@ const extractAudio = async (videoBuffer, outputFormat = 'wav') => {
       })
       .pipe(outputStream, { end: false });
   });
+ } catch (error) {
+  throw new Error(error)
+ }
 };
 
 module.exports = {

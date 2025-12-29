@@ -4,6 +4,7 @@ const variables = require('../const/variables');
 const { getVideoDuration } = require('../utils/video');
 const { Video } = require('../models');
 const { createJob } = require('../jobs/jobCreator');
+const { default: mongoose } = require('mongoose');
 
 const videoController = {
   uploadVideo: async (req, res) => {
@@ -29,7 +30,7 @@ const videoController = {
 
       const user = req.user;
       const { targetLanguage, selectedVoice, videoLanguage } = req.body;
-      const directory = `${variables.VIDOES}/${user._id}`;
+      const directory = `${variables.VIDOES}/${user?._id}`;
       const fileName = req.file.originalname.replace(/\.[^/.]+$/, '') || null;
       const videoTitle = req.body.title || fileName || null;
 
@@ -70,9 +71,46 @@ const videoController = {
         201
       );
     } catch (error) {
+      console.log("Error", error)
       return sendError(res, error.message, 500);
     }
   },
+
+  getVideos: async(req, res) => {
+    try {
+      const { userId } = req.params
+
+      const videoData = await Video.aggregate([
+        {
+          $match: {
+            userId: new mongoose.Types.ObjectId(userId) 
+          }
+        },
+        {
+          $lookup: {
+            from: "jobs",
+            localField: "_id",
+            foreignField: "videoId",
+            as: "JobData"
+          }
+        },        
+        {
+          $unwind: {
+            path: "$JobData",
+            preserveNullAndEmptyArrays: true
+          }
+        }
+      ])
+
+      return sendSuccess(
+        res,
+        "All User Videos",
+        videoData
+      )
+    } catch (error) {
+      return sendError(res, error.message, 500)
+    }
+  }
 };
 
 module.exports = videoController;
