@@ -93,6 +93,14 @@ const videoSchema = new mongoose.Schema({
       default: null,
     },
   },
+  subTitles: [
+    {
+      start: Number,
+      end: Number,
+      text: String,
+      emotion: String,
+    }
+  ]
 }, {
   timestamps: true,
 });

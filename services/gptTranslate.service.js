@@ -1,4 +1,5 @@
 const OpenAI = require("openai");
+const { parseGPTResponse, validateSegments, generateTranslationPrompt } = require("../utils/jsonUtils");
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -20,34 +21,14 @@ const translateSegments = async ({
   const isTranslationNeeded = videoLanguage && targetLanguage &&
     videoLanguage.toLowerCase() !== targetLanguage.toLowerCase();
 
-    const prompt = `
-    You are a professional video dubbing writer. Your task is to rewrite segments so they match the EXACT duration provided.
-    
-    Context:
-    - Original Language: ${videoLanguage || 'Unknown'}
-    - Target Language: ${targetLanguage || videoLanguage || 'Unknown'}
-    - Goal: ${isTranslationNeeded ? 'Translate and rewrite' : 'Rewrite for timing'}
-    
-    MATHEMATICAL TIMING RULES (MANDATORY):
-    1. For every segment, calculate Duration = (end - start).
-    2. Use a "Natural Speech Constant" of 14 characters per second (including spaces).
-    3. Target Character Count = Duration * 14.
-    4. You MUST adjust the length of the sentence to be within +/- 10% of that Target Character Count.
-    5. If a segment is 7.4 seconds, the text MUST be approximately 100-105 characters long. 
-    6. If the text is too short, expand the sentence with descriptive but natural adjectives or connecting phrases. Do NOT use filler words like "um."
-    
-    REWRITE STRATEGY:
-    - Too Short? Expand: Instead of "Be careful," use "So you really need to make sure that you are being extra careful."
-    - Too Long? Condense: Instead of "It is a very important thing for you to remember," use "It's a vital thing to remember."
-    
-    STRICT OUTPUT FORMAT:
-    - Output ONLY a valid JSON array.
-    - Structure: [{ "start": float, "end": float, "text": string }]
-    - No markdown, no preamble.
-    
-    Input segments:
-    ${JSON.stringify(segments, null, 2)}
-    `;
+  // Generate translation prompt
+  const prompt = generateTranslationPrompt({
+    segments,
+    videoLanguage,
+    targetLanguage,
+    isTranslationNeeded
+  });
+
 
   const response = await openai.chat.completions.create({
     model: "gpt-4o-mini",
@@ -61,36 +42,28 @@ const translateSegments = async ({
     ]
   });
 
-  let content = response.choices[0].message.content.trim();
-
-  // Remove markdown code blocks if present
-  if (content.startsWith('```')) {
-    // Remove opening ```json or ```
-    content = content.replace(/^```(?:json)?\s*/i, '');
-    // Remove closing ```
-    content = content.replace(/\s*```$/g, '');
-  }
-
-  // Try to parse as JSON
-  try {
-    const parsed = JSON.parse(content);
-    // If it's wrapped in an object, extract the array
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      // Check for common keys that might contain the array
-      const possibleKeys = ['segments', 'result', 'data', 'output', 'translation'];
-      for (const key of possibleKeys) {
-        if (Array.isArray(parsed[key])) {
-          return parsed[key];
+  const content = response.choices[0].message.content.trim();
+  
+  const segmentsArray = parseGPTResponse(content);
+  const validatedSegments = validateSegments(segmentsArray);
+  
+  // Validate character count matches original
+  if (Array.isArray(validatedSegments) && Array.isArray(segments)) {
+    validatedSegments.forEach((translatedSegment, index) => {
+      if (segments[index] && translatedSegment && translatedSegment.text) {
+        const originalLength = segments[index].text ? segments[index].text.length : 0;
+        const translatedLength = translatedSegment.text.length;
+        
+        if (originalLength !== translatedLength) {
+          console.warn(`Character count mismatch for segment ${index}: original=${originalLength}, translated=${translatedLength}`);
+          console.warn(`Original: "${segments[index].text}"`);
+          console.warn(`Translated: "${translatedSegment.text}"`);
         }
       }
-      // If no array found, return the object values as array
-      return Object.values(parsed).find(Array.isArray) || parsed;
-    }
-    return parsed;
-  } catch (parseError) {
-    console.error('JSON parse error. Content:', content.substring(0, 200));
-    throw new Error(`Failed to parse translation response: ${parseError.message}`);
+    });
   }
+  
+  return validatedSegments;
 };
 
 module.exports = {

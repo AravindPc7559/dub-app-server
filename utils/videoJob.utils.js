@@ -3,7 +3,7 @@ const path = require('path');
 const { getFile, uploadFileFromBuffer } = require('./r2');
 const { runDemucs } = require('../services/demucs.service');
 const { transcribeAudio } = require('../services/whisper.service');
-const { generateTTSBuffer } = require('../services/tts.service');
+const { generateTTSBuffer } = require('../services/azure_tts.service');
 const { normalizeSegments } = require('./openAiUtils');
 const variables = require('../const/variables');
 
@@ -88,22 +88,43 @@ const readSeparatedAudioFiles = (vocalsPath, backgroundPath) => {
  * @param {string} baseName - Base name of the audio file (without extension)
  */
 async function cleanupTempFiles(jobId) {
-  const folders = [
+  const pathsToClean = [
     path.join("tmp", "tts", jobId),
     path.join("tmp", "htdemucs", "htdemucs", `${jobId}_audio`),
     path.join("tmp", "final", jobId),
+    path.join("tmp", `${jobId}_vocals_temp.mp3`),
+    path.join("tmp", `${jobId}_audio.wav`),
   ];
 
   await Promise.all(
-    folders.map(async (folderPath) => {
+    pathsToClean.map(async (itemPath) => {
       try {
-        await fs.promises.rm(folderPath, {
-          recursive: true,
-          force: true,
-        });
-        console.log(`✅ Deleted: ${folderPath}`);
+        // Check if path exists
+        const exists = await fs.promises.access(itemPath).then(() => true).catch(() => false);
+        if (!exists) {
+          return; // Skip if doesn't exist
+        }
+
+        // Check if it's a directory or file
+        const stats = await fs.promises.stat(itemPath);
+        
+        if (stats.isDirectory()) {
+          // Delete directory recursively
+          await fs.promises.rm(itemPath, {
+            recursive: true,
+            force: true,
+          });
+          console.log(`✅ Deleted directory: ${itemPath}`);
+        } else if (stats.isFile()) {
+          // Delete file
+          await fs.promises.unlink(itemPath);
+          console.log(`✅ Deleted file: ${itemPath}`);
+        }
       } catch (err) {
-        console.error(`❌ Failed to delete ${folderPath}`, err);
+        // Ignore ENOENT errors (file/directory doesn't exist)
+        if (err.code !== 'ENOENT') {
+          console.error(`❌ Failed to delete ${itemPath}:`, err.message);
+        }
       }
     })
   );
@@ -294,46 +315,105 @@ const updateVideoWithRewrittenScript = async (video, uploadResult) => {
 
 /**
  * Generate TTS audio for all segments in rewritten script and save locally
- * @param {Array} rewrittenScript - Array of segments with text
+ * @param {Array} rewrittenScript - Array of segments with text and emotion
  * @param {string|ObjectId} videoId - Video ID for folder naming
- * @param {string} voice - Voice to use for TTS
+ * @param {string} voice - Voice to use for TTS (optional, will use language-based voice if not provided)
+ * @param {string} targetLanguage - Target language code (e.g., 'en', 'hi', 'ml')
  * @returns {Promise<Array>} Array of file paths and segment info
  */
-const generateTTSForSegments = async (rewrittenScript, videoId, voice = 'alloy') => {
+const generateTTSForSegments = async (rewrittenScript, videoId, voice = null, targetLanguage = 'en') => {
   // Convert videoId to string (handles both string and ObjectId)
   const videoIdStr = videoId?.toString ? videoId.toString() : String(videoId);
   const ttsDir = path.join(__dirname, '../tmp/tts', videoIdStr);
   fs.mkdirSync(ttsDir, { recursive: true });
 
-  console.log(`Generating TTS for ${rewrittenScript.length} segments with voice: ${voice}`);
+  console.log(`Generating TTS for ${rewrittenScript.length} segments with Azure TTS`);
+  console.log(`Target language: ${targetLanguage}, Voice: ${voice || 'auto'}`);
   console.log(`Saving TTS files to: ${ttsDir}`);
 
-  const ttsPromises = rewrittenScript.map(async (segment, index) => {
-    try {
-      const audioBuffer = await generateTTSBuffer({
-        text: segment.text,
-        voice
-      });
+  const results = [];
+  const DELAY_BETWEEN_REQUESTS = 200; // 200ms delay between requests to avoid rate limits
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_BASE = 1000; // 1 second base delay for retries
 
-      // Save to local file
-      const fileName = `segment-${index}.wav`;
-      const filePath = path.join(ttsDir, fileName);
-      fs.writeFileSync(filePath, audioBuffer);
+  // Process segments sequentially to avoid rate limiting
+  for (let index = 0; index < rewrittenScript.length; index++) {
+    const segment = rewrittenScript[index];
+    let retryCount = 0;
+    let success = false;
 
-      console.log(`TTS generated and saved for segment ${index + 1}/${rewrittenScript.length}: ${filePath}`);
-      return {
-        segmentIndex: index,
-        filePath,
-        audioBuffer, // Keep buffer for potential later use
-        segment
-      };
-    } catch (err) {
-      console.error(`Failed to generate TTS for segment ${index + 1}:`, err.message);
-      throw new Error(err);
+    while (!success && retryCount <= MAX_RETRIES) {
+      try {
+        // Add delay before each request (except first one)
+        if (index > 0) {
+          await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_REQUESTS));
+        }
+
+        const audioBuffer = await generateTTSBuffer({
+          text: segment.text,
+          voice,
+          emotion: segment.emotion || 'neutral',
+          targetLanguage
+        });
+
+        // Validate buffer before saving
+        if (!audioBuffer || !Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
+          throw new Error(`Invalid audio buffer generated for segment ${index + 1}`);
+        }
+
+        // Validate minimum file size (WAV header is typically 44 bytes, but valid audio should be larger)
+        if (audioBuffer.length < 1000) {
+          throw new Error(`Audio buffer too small for segment ${index + 1} (${audioBuffer.length} bytes)`);
+        }
+
+        // Save to local file
+        const fileName = `segment-${index}.wav`;
+        const filePath = path.join(ttsDir, fileName);
+        fs.writeFileSync(filePath, audioBuffer);
+
+        // Verify file was written correctly
+        if (!fs.existsSync(filePath)) {
+          throw new Error(`Failed to save TTS file: ${filePath}`);
+        }
+
+        const fileStats = fs.statSync(filePath);
+        if (fileStats.size !== audioBuffer.length) {
+          throw new Error(`File size mismatch for ${filePath}: expected ${audioBuffer.length}, got ${fileStats.size}`);
+        }
+
+        console.log(`TTS generated and saved for segment ${index + 1}/${rewrittenScript.length}: ${filePath} (${fileStats.size} bytes)`);
+        
+        results.push({
+          segmentIndex: index,
+          filePath,
+          audioBuffer, // Keep buffer for potential later use
+          segment
+        });
+        
+        success = true;
+      } catch (err) {
+        const isRateLimitError = err.message && (
+          err.message.includes('ResourceExhausted') ||
+          err.message.includes('no tokens available') ||
+          err.message.includes('rate limit') ||
+          err.message.includes('quota')
+        );
+
+        if (isRateLimitError && retryCount < MAX_RETRIES) {
+          retryCount++;
+          const retryDelay = RETRY_DELAY_BASE * Math.pow(2, retryCount - 1); // Exponential backoff
+          console.warn(
+            `Rate limit hit for segment ${index + 1}, retrying in ${retryDelay}ms (attempt ${retryCount}/${MAX_RETRIES})...`
+          );
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        } else {
+          console.error(`Failed to generate TTS for segment ${index + 1}:`, err.message);
+          throw new Error(`TTS generation failed for segment ${index + 1}: ${err.message}`);
+        }
+      }
     }
-  });
+  }
 
-  const results = await Promise.all(ttsPromises);
   console.log(`All TTS audio generated and saved locally (${results.length} files)`);
   return results;
 };
@@ -411,7 +491,7 @@ module.exports = {
   processAudioSeparation,
   uploadAudioFiles,
   transcribeVocalsAudio,
-  updateVideoWithAudioKeys,
+updateVideoWithAudioKeys,
   updateVideoWithTranscription,
   uploadRewrittenScript,
   updateVideoWithRewrittenScript,

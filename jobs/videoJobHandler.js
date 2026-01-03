@@ -38,7 +38,6 @@ const processVideoJob = async (job) => {
   }
 
   try {
-
     // Update video status to processing
     video.status = variables.PROCESSING;
     await video.save();
@@ -78,7 +77,7 @@ const processVideoJob = async (job) => {
       videoId,
       video.videoLanguage || null
     );
-    console.log('Audio transcription completed');
+    console.log('Audio transcription completed', transcription);
 
     // 9. Update database with transcription
     await updateVideoWithTranscription(video, transcription);
@@ -91,6 +90,11 @@ const processVideoJob = async (job) => {
       });
       console.log('Rewritten script completed', rewrittenScript);
 
+      // 10. Update database with subtitles
+      video.subTitles = rewrittenScript;
+      await video.save();
+      console.log('Database updated with subtitles');
+
       // 11. Upload rewritten script to R2
       const scriptUploadResult = await uploadRewrittenScript(
         rewrittenScript,
@@ -102,16 +106,16 @@ const processVideoJob = async (job) => {
       await updateVideoWithRewrittenScript(video, scriptUploadResult);
 
       // 13. Generate TTS audio for rewritten script segments and save locally
-      const voice = video.selectedVoice || 'alloy';
-      const ttsResults = await generateTTSForSegments(rewrittenScript, videoId, voice);
-      console.log('TTS audio generated and saved locally for all segments', ttsResults);
+      const voice = video.selectedVoice || null; // Azure TTS will use language-based voice if null
+      const targetLanguage = video.targetLanguage || 'en';
+      const ttsResults = await generateTTSForSegments(rewrittenScript, videoId, voice, targetLanguage);
 
       const finalAudio = await buildFinalAudio(userId, videoId, ttsResults);
       console.log('Final audio built and uploaded to R2');
 
-       // 7. Update database with audio keys
-    await updateVideoWithAudioKeys(video, {...uploadResults, tts: finalAudio});
-      
+      // 7. Update database with audio keys
+      await updateVideoWithAudioKeys(video, { ...uploadResults, tts: finalAudio });
+
       const output = await finalizeVideo(userId, video._id, video.inputVideo.s3Key);
       console.log('Video finalized and uploaded to R2');
 
@@ -121,13 +125,13 @@ const processVideoJob = async (job) => {
 
   } catch (err) {
     await Job.findOneAndUpdate(
-      { videoId: video._id }, 
+      { videoId: video._id },
       { status: jobStatus[3] }
     );
     throw err;
   } finally {
     // 10. Always clean up temporary files, even if there was an error
-    cleanupTempFiles(videoId.toString());
+    // cleanupTempFiles(videoId.toString());
   }
 };
 
