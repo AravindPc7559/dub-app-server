@@ -141,7 +141,6 @@ const processVideoJob = async (job) => {
     const errorMessage = err.message || 'Unknown error occurred';
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
     
-    // Update both job and video status to FAILED
     await Promise.all([
       Job.findOneAndUpdate(
         { videoId: video._id },
@@ -161,6 +160,8 @@ const processVideoJob = async (job) => {
     
     console.error(`[Job] Failed after ${totalTime}s:`, errorMessage);
     throw err;
+  } finally {
+    cleanupTempFiles(videoId);
   }
 };
 
