@@ -3,41 +3,41 @@ const fs = require("fs");
 const path = require("path");
 const { EMOTION_MAP } = require("../const/emotions");
 
-function buildSSML({ text, emotion, language = "hi-IN", voice }) {
-    const config = EMOTION_MAP[emotion] || EMOTION_MAP.neutral;
-    
-    // Escape XML special characters in text
-    const escapedText = text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&apos;');
+function buildSSML({ text, emotion, language = "hi-IN", voice, duration }) {
+  const config = EMOTION_MAP[emotion] || EMOTION_MAP.neutral;
   
-    // Use very subtle prosody adjustments for natural speech
-    // The emotion style provides most expression; prosody is just a gentle enhancement
-    const getNaturalValue = (value) => {
-      if (value === "0%") return "0%";
-      const num = parseInt(value);
-      // Cap at realistic ranges: rate ±3%, pitch ±2%
-      if (num > 5) return "+3%";
-      if (num < -5) return "-3%";
-      if (Math.abs(num) <= 3) return value;
-      return num > 0 ? "+2%" : "-2%";
-    };
-    
-    const naturalRate = getNaturalValue(config.rate);
-    const naturalPitch = getNaturalValue(config.pitch);
+  // Escape XML special characters in text
+  const escapedText = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
+  // DO NOT use duration tag - it causes unnatural slowdown
+  // Instead, rely on natural text length and break tags
   
-    return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${language}">
-    <voice name="${voice}">
-      <mstts:express-as style="${config.style}">
-        <prosody rate="${naturalRate}" pitch="${naturalPitch}">
-          ${escapedText}
-        </prosody>
-      </mstts:express-as>
-    </voice>
-  </speak>`;
+  const getNaturalValue = (value) => {
+    if (value === "0%") return "0%";
+    const num = parseInt(value);
+    if (num > 5) return "+3%";
+    if (num < -5) return "-3%";
+    if (Math.abs(num) <= 3) return value;
+    return num > 0 ? "+2%" : "-2%";
+  };
+  
+  const naturalRate = getNaturalValue(config.rate);
+  const naturalPitch = getNaturalValue(config.pitch);
+
+  return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${language}">
+  <voice name="${voice}">
+    <mstts:express-as style="${config.style}">
+      <prosody rate="${naturalRate}" pitch="${naturalPitch}">
+        ${escapedText}
+      </prosody>
+    </mstts:express-as>
+  </voice>
+</speak>`;
 }
 
 function generateAzureTTSBuffer({ ssml }) {

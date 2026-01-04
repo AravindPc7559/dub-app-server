@@ -9,13 +9,6 @@ const {
   adjustAudioSpeed,
 } = require('./audioUtils');
 
-/**
- * Build final audio by assembling TTS segments with silence gaps
- * @param {string} userId - User ID
- * @param {string} videoId - Video ID
- * @param {Array} rawSegments - Array of segment objects with TTS audio
- * @returns {Promise<Object>} Upload result from R2
- */
 const buildFinalAudio = async (userId, videoId, rawSegments) => {
   if (!Array.isArray(rawSegments) || rawSegments.length === 0) {
     throw new Error("No segments provided for audio assembly");
@@ -26,11 +19,9 @@ const buildFinalAudio = async (userId, videoId, rawSegments) => {
   const silenceDir = path.join(ttsDir, 'silence');
   fs.mkdirSync(silenceDir, { recursive: true });
 
-  // Build sequence of audio files and silence gaps
   const sequence = [];
   let silenceCounter = 1;
 
-  // Add leading silence if needed
   if (segments[0].start > 0) {
     const silenceFile = path.join(silenceDir, `silence${silenceCounter}.wav`);
     createSilenceFile(silenceFile, segments[0].start);
@@ -38,7 +29,6 @@ const buildFinalAudio = async (userId, videoId, rawSegments) => {
     silenceCounter++;
   }
 
-  // Add segments and gaps between them
   segments.forEach((segment, index) => {
     const audioFile = path.join(ttsDir, `segment-${index}.wav`);
     if (!fs.existsSync(audioFile)) {
@@ -47,7 +37,6 @@ const buildFinalAudio = async (userId, videoId, rawSegments) => {
 
     sequence.push(`segment-${index}.wav`);
 
-    // Add silence gap before next segment if needed
     if (index < segments.length - 1) {
       const nextSegment = segments[index + 1];
       const gap = nextSegment.start - segment.end;
@@ -60,35 +49,31 @@ const buildFinalAudio = async (userId, videoId, rawSegments) => {
     }
   });
 
-  // Adjust segment durations to match target timing
   if (sequence.length > 1) {
     for (const item of sequence) {
       if (item.startsWith('segment-')) {
         const segmentIndex = parseInt(item.match(/segment-(\d+)/)?.[1]);
-        if (segmentIndex === undefined || !segments[segmentIndex]) {
-          continue;
-        }
+        if (segmentIndex === undefined || !segments[segmentIndex]) continue;
 
         const audioFile = path.join(ttsDir, item);
-        if (!fs.existsSync(audioFile)) {
-          continue;
-        }
+        if (!fs.existsSync(audioFile)) continue;
 
         const duration = getAudioDuration(audioFile);
         const targetDuration = segments[segmentIndex].end - segments[segmentIndex].start;
-        const durationDiff = Math.abs(duration - targetDuration);
+        const durationDiff = targetDuration - duration;
 
-        if (durationDiff < 0.01) {
-          continue;
-        }
+        if (Math.abs(durationDiff) < 0.05) continue;
 
+        if (duration > targetDuration) {
         const tempo = duration / targetDuration;
-        const minTempo = 0.90; // Max 10% slowdown
+          const adjustedTempo = Math.max(1.0, tempo);
 
-        if (duration > targetDuration || (duration < targetDuration && tempo >= minTempo)) {
-          const adjustedFile = path.join(ttsDir, `segment-${segmentIndex}_final.wav`);
-          await adjustAudioSpeed(audioFile, adjustedFile, tempo);
+          if (adjustedTempo <= 1.5) {
+            const adjustedFile = path.join(ttsDir, `segment-${segmentIndex}_adjusted.wav`);
+            await adjustAudioSpeed(audioFile, adjustedFile, adjustedTempo);
 
+            const adjustedDuration = getAudioDuration(adjustedFile);
+            if (adjustedDuration > targetDuration + 0.05) {
           const trimmedFile = path.join(ttsDir, `segment-${segmentIndex}_trimmed.wav`);
           const trimCmd = `ffmpeg -y -i "${adjustedFile}" -t ${targetDuration.toFixed(3)} "${trimmedFile}"`;
           execSync(trimCmd, { stdio: 'pipe' });
@@ -96,13 +81,19 @@ const buildFinalAudio = async (userId, videoId, rawSegments) => {
           const itemIndex = sequence.indexOf(`segment-${segmentIndex}.wav`);
           if (itemIndex !== -1) {
             sequence[itemIndex] = `segment-${segmentIndex}_trimmed.wav`;
+              }
+            } else {
+              const itemIndex = sequence.indexOf(`segment-${segmentIndex}.wav`);
+              if (itemIndex !== -1) {
+                sequence[itemIndex] = `segment-${segmentIndex}_adjusted.wav`;
+              }
+            }
           }
         }
       }
     }
   }
 
-  // Build concatenation list
   const concatFile = path.join(ttsDir, 'concat_list.txt');
   const concatLines = [];
 
@@ -122,7 +113,6 @@ const buildFinalAudio = async (userId, videoId, rawSegments) => {
 
   fs.writeFileSync(concatFile, concatLines.join('\n'), 'utf8');
 
-  // Concatenate all files
   const finalAudio = path.join(ttsDir, 'final_dub_audio.wav');
   const concatFileAbs = path.resolve(concatFile);
   const ffmpegCmd = `ffmpeg -y -f concat -safe 0 -i "${concatFileAbs}" -c:a pcm_s16le -ar ${SAMPLE_RATE} -ac 2 "${finalAudio}"`;
@@ -133,7 +123,8 @@ const buildFinalAudio = async (userId, videoId, rawSegments) => {
     throw new Error("Final audio file was not created");
   }
 
-  // Upload to R2
+  console.log(`[Audio] Assembled final audio: ${finalAudio}`);
+
   const uploadResult = await uploadFileFromBuffer(
     fs.readFileSync(finalAudio),
     "audio/wav",

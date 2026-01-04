@@ -22,45 +22,51 @@ const { LANGUAGE_MAP } = require("../const/openAiLanguages");
 const { buildFinalAudio } = require("../utils/audioAssembler");
 const { finalizeVideo } = require("../services/videoFinalizer.service");
 const { jobStatus, videoStatus } = require("../const/options");
+const { JOB_STATUS, VIDEO_STATUS } = require("../const/worker.constants");
 
-/**
- * Process video job - main handler
- * @param {Object} job - Job object with videoId, userId, etc.
- */
 const processVideoJob = async (job) => {
   const { videoId, userId } = job;
-
   const { audioFilePath, demucsOutputDir } = getVideoPaths(videoId);
-  // 1. Load and validate video
+  const startTime = Date.now();
+
   const video = await Video.findById(videoId);
   if (!video) {
     throw new Error(`Video not found: ${videoId}`);
   }
 
   try {
-    // Update video status to processing
     video.status = variables.PROCESSING;
     await video.save();
 
-    // 2. Download video from R2
+    console.log(`[Job] Processing video ${videoId}`);
+
+    // Phase 1: Download video (start early, will be used later)
+    const downloadStart = Date.now();
     const { s3Key } = video.inputVideo;
-    const videoBuffer = await downloadVideo(s3Key);
-    console.log('Video downloaded from R2');
-
-    // 3. Extract audio from video
+    const videoDownloadPromise = downloadVideo(s3Key);
+    
+    // Phase 2: Extract audio (wait for download)
+    const extractStart = Date.now();
+    const videoBuffer = await videoDownloadPromise;
+    const downloadTime = ((Date.now() - downloadStart) / 1000).toFixed(2);
+    console.log(`[Job] Video downloaded (${downloadTime}s)`);
+    
     const audioBuffer = await extractAudio(videoBuffer, 'wav');
-    console.log('Audio extracted from video');
-
-    // 4. Save audio to temporary file
     saveAudioToFile(audioBuffer, audioFilePath);
+    const extractTime = ((Date.now() - extractStart) / 1000).toFixed(2);
+    console.log(`[Job] Audio extracted (${extractTime}s)`);
 
-    // 5. Separate vocals and background using Demucs
+    // Phase 3: Separate audio
+    const separateStart = Date.now();
     const { vocalsBuffer, backgroundBuffer } = await processAudioSeparation(
       audioFilePath,
       demucsOutputDir
     );
+    const separateTime = ((Date.now() - separateStart) / 1000).toFixed(2);
+    console.log(`[Job] Audio separated (${separateTime}s)`);
 
-    // 6. Upload all audio files to R2
+    // Phase 4: Upload audio files
+    const uploadStart = Date.now();
     const uploadResults = await uploadAudioFiles(
       audioBuffer,
       vocalsBuffer,
@@ -68,70 +74,93 @@ const processVideoJob = async (job) => {
       userId,
       videoId
     );
-    console.log('All audio files uploaded to R2');
+    const uploadTime = ((Date.now() - uploadStart) / 1000).toFixed(2);
+    console.log(`[Job] Audio files uploaded (${uploadTime}s)`);
 
-
-    // 8. Transcribe vocals audio using Whisper
+    // Phase 5: Transcribe
+    const transcribeStart = Date.now();
     const transcription = await transcribeVocalsAudio(
       vocalsBuffer,
       videoId,
       video.videoLanguage || null
     );
-    console.log('Audio transcription completed', transcription);
+    const transcribeTime = ((Date.now() - transcribeStart) / 1000).toFixed(2);
+    console.log(`[Job] Transcription completed (${transcribeTime}s)`);
 
-    // 9. Update database with transcription
     await updateVideoWithTranscription(video, transcription);
 
     if (transcription?.segments) {
+      const voice = video.selectedVoice || null;
+      const targetLanguage = video.targetLanguage || 'en';
+      
+      // Phase 6: Translate/rewrite script
+      const translateStart = Date.now();
       const rewrittenScript = await translateSegments({
         segments: transcription?.segments,
         videoLanguage: LANGUAGE_MAP[video?.videoLanguage],
         targetLanguage: LANGUAGE_MAP[video?.targetLanguage],
+        voice: voice,
+        targetLanguageCode: targetLanguage
       });
-      console.log('Rewritten script completed', rewrittenScript);
+      const translateTime = ((Date.now() - translateStart) / 1000).toFixed(2);
+      console.log(`[Job] Script rewritten (${rewrittenScript.length} segments, ${translateTime}s)`);
 
-      // 10. Update database with subtitles
       video.subTitles = rewrittenScript;
       await video.save();
-      console.log('Database updated with subtitles');
 
-      // 11. Upload rewritten script to R2
-      const scriptUploadResult = await uploadRewrittenScript(
-        rewrittenScript,
-        userId,
-        videoId
-      );
-
-      // 12. Update database with rewritten script key
+      const scriptUploadResult = await uploadRewrittenScript(rewrittenScript, userId, videoId);
       await updateVideoWithRewrittenScript(video, scriptUploadResult);
 
-      // 13. Generate TTS audio for rewritten script segments and save locally
-      const voice = video.selectedVoice || null; // Azure TTS will use language-based voice if null
-      const targetLanguage = video.targetLanguage || 'en';
+      // Phase 7: Generate TTS
+      const ttsStart = Date.now();
       const ttsResults = await generateTTSForSegments(rewrittenScript, videoId, voice, targetLanguage);
+      const ttsTime = ((Date.now() - ttsStart) / 1000).toFixed(2);
+      console.log(`[Job] TTS generated (${ttsTime}s)`);
 
+      // Phase 8: Assemble audio
+      const assembleStart = Date.now();
       const finalAudio = await buildFinalAudio(userId, videoId, ttsResults);
-      console.log('Final audio built and uploaded to R2');
+      const assembleTime = ((Date.now() - assembleStart) / 1000).toFixed(2);
+      console.log(`[Job] Audio assembled (${assembleTime}s)`);
 
-      // 7. Update database with audio keys
       await updateVideoWithAudioKeys(video, { ...uploadResults, tts: finalAudio });
 
+      // Phase 9: Finalize video
+      const finalizeStart = Date.now();
       const output = await finalizeVideo(userId, video._id, video.inputVideo.s3Key);
-      console.log('Video finalized and uploaded to R2');
+      const finalizeTime = ((Date.now() - finalizeStart) / 1000).toFixed(2);
+      console.log(`[Job] Video finalized (${finalizeTime}s)`);
 
-      // 14. Update database with final audio key
       await updateVideoWithTTSAudio(video, output);
+      
+      const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+      console.log(`[Job] Completed successfully (Total: ${totalTime}s)`);
     }
 
   } catch (err) {
-    await Job.findOneAndUpdate(
-      { videoId: video._id },
-      { status: jobStatus[3] }
-    );
+    const errorMessage = err.message || 'Unknown error occurred';
+    const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    
+    // Update both job and video status to FAILED
+    await Promise.all([
+      Job.findOneAndUpdate(
+        { videoId: video._id },
+        { 
+          status: JOB_STATUS.FAILED,
+          error: errorMessage
+        }
+      ),
+      Video.findByIdAndUpdate(
+        video._id,
+        {
+          status: VIDEO_STATUS.FAILED,
+          error: errorMessage
+        }
+      )
+    ]);
+    
+    console.error(`[Job] Failed after ${totalTime}s:`, errorMessage);
     throw err;
-  } finally {
-    // 10. Always clean up temporary files, even if there was an error
-    // cleanupTempFiles(videoId.toString());
   }
 };
 

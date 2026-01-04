@@ -17,12 +17,12 @@ const videoController = {
 
       if (req.file.mimetype.startsWith('video/')) {
         duration = await getVideoDuration(req.file.buffer);
-        const maxDuration = 60;
+        const maxDuration = 90; // 1 minute 30 seconds
 
         if (duration > maxDuration) {
           return sendError(
             res,
-            `Video duration must be under ${maxDuration} seconds. Your video is ${Math.ceil(duration)} seconds.`,
+            `Video duration must be under 1 minute 30 seconds (${maxDuration} seconds). Your video is ${Math.ceil(duration)} seconds.`,
             400
           );
         }
