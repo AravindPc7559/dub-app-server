@@ -332,6 +332,59 @@ const videoController = {
       console.error('Download audio error:', error);
       return sendError(res, error.message || 'Failed to download audio', 500);
     }
+  },
+
+  downloadVideo: async (req, res) => {
+    try {
+      const { videoId } = req.params;
+      const user = req.user;
+
+      // Find the video and verify ownership
+      const video = await Video.findOne({
+        _id: videoId,
+        userId: user._id
+      });
+
+      if (!video) {
+        return sendError(res, 'Video not found or access denied', 404);
+      }
+
+      // Check if final video exists
+      if (!video.outputVideo?.s3Key) {
+        return sendError(res, 'Final video not available for this video', 404);
+      }
+
+      // Fetch file from R2
+      const fileResponse = await getFile(video.outputVideo.s3Key);
+      
+      if (!fileResponse || !fileResponse.Body) {
+        return sendError(res, 'Video file not found in R2', 404);
+      }
+
+      // Convert stream to buffer
+      const fileBuffer = await streamToBuffer(fileResponse.Body);
+
+      // Extract filename from key or use default
+      const keyParts = video.outputVideo.s3Key.split('/');
+      const fileName = keyParts[keyParts.length - 1] || `final_video_${videoId}.mp4`;
+      
+      // Get content type from R2 metadata or infer from key
+      const contentType = fileResponse.ContentType || 
+        (video.outputVideo.s3Key.endsWith('.mp4') ? 'video/mp4' : 
+         video.outputVideo.s3Key.endsWith('.webm') ? 'video/webm' : 
+         'video/mp4');
+
+      // Set headers to force download
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Length', fileBuffer.length);
+
+      // Send file
+      res.send(fileBuffer);
+    } catch (error) {
+      console.error('Download video error:', error);
+      return sendError(res, error.message || 'Failed to download video', 500);
+    }
   }
 };
 

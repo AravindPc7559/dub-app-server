@@ -8,6 +8,7 @@ router.post('/', authenticate, uploadMiddleware.single('video'), videoController
 router.get('/videos/:userId', authenticate, videoController.getVideos)
 router.get('/subtitles/:videoId', authenticate, videoController.getSubtitles)
 router.get('/audio/:videoId', authenticate, videoController.downloadAudio)
+router.get('/video/:videoId', authenticate, videoController.downloadVideo)
 router.delete('/:videoId', authenticate, videoController.deleteVideo)
 
 module.exports = router;
