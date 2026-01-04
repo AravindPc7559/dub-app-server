@@ -57,12 +57,15 @@ const readSeparatedAudioFiles = (vocalsPath, backgroundPath) => {
 };
 
 async function cleanupTempFiles(jobId) {
+  // Convert to string if it's an ObjectId or other type
+  const jobIdStr = jobId?.toString ? jobId.toString() : String(jobId);
+  
   const pathsToClean = [
-    path.join("tmp", "tts", jobId),
-    path.join("tmp", "htdemucs", "htdemucs", `${jobId}_audio`),
-    path.join("tmp", "final", jobId),
-    path.join("tmp", `${jobId}_vocals_temp.mp3`),
-    path.join("tmp", `${jobId}_audio.wav`),
+    path.join("tmp", "tts", jobIdStr),
+    path.join("tmp", "htdemucs", "htdemucs", `${jobIdStr}_audio`),
+    path.join("tmp", "final", jobIdStr),
+    path.join("tmp", `${jobIdStr}_vocals_temp.mp3`),
+    path.join("tmp", `${jobIdStr}_audio.wav`),
   ];
 
   await Promise.all(

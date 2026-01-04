@@ -47,6 +47,10 @@ const videoSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  retryCount: {
+    type: Number,
+    default: 0,
+  },
   audio: {
     original: {
       type: String,

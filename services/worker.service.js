@@ -58,9 +58,17 @@ const startWorker = async () => {
       console.error('Job processing error:', err);
       
       if (job) {
-        await handleJobFailure(job, err);
+        try {
+          await handleJobFailure(job, err);
+        } catch (failureError) {
+          console.error('Error handling job failure:', failureError);
+          // Continue processing even if failure handling fails
+        }
       }
     }
+    
+    // Small delay to prevent tight loop on errors
+    await sleep(1000);
   }
 };
 

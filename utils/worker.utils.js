@@ -34,17 +34,20 @@ const updateVideoStatus = async (videoId, status, error = null) => {
  * @returns {Promise<void>}
  */
 const handleJobFailure = async (job, error) => {
-  const isMaxAttemptsReached = job.attempts >= job.maxAttempts;
-  
-  job.status = isMaxAttemptsReached ? JOB_STATUS.FAILED : JOB_STATUS.PENDING;
-  job.error = error.message;
-  job.lockedAt = null;
-  
-  await job.save();
-  
-  // Only update video to FAILED if job is permanently failed (max attempts reached)
-  if (isMaxAttemptsReached) {
-    await updateVideoStatus(job.videoId, VIDEO_STATUS.FAILED, error.message);
+  try {
+    // Always mark job as FAILED immediately - no automatic retries
+    // User can manually retry using the retry endpoint
+    job.status = JOB_STATUS.FAILED;
+    job.error = error?.message || 'Unknown error occurred';
+    job.lockedAt = null;
+    
+    await job.save();
+    
+    // Mark video as FAILED immediately
+    await updateVideoStatus(job.videoId, VIDEO_STATUS.FAILED, error?.message || 'Unknown error occurred');
+  } catch (err) {
+    console.error(`Failed to handle job failure for job ${job?._id}:`, err.message);
+    // Don't throw - let the worker continue
   }
 };
 

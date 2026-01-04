@@ -100,7 +100,7 @@ RULES:
 4. Pauses: Add <break time='100-500ms'/> tags at natural pauses (commas, periods).
 5. SSML: Generate complete SSML with:
    <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${locale}">
-     <voice name="${azureVoiceName}">
+     <voice name="${azureVoiceName}>
        <mstts:express-as style="[emotion]">
          [text with break tags]
        </mstts:express-as>

@@ -141,27 +141,17 @@ const processVideoJob = async (job) => {
     const errorMessage = err.message || 'Unknown error occurred';
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
     
-    await Promise.all([
-      Job.findOneAndUpdate(
-        { videoId: video._id },
-        { 
-          status: JOB_STATUS.FAILED,
-          error: errorMessage
-        }
-      ),
-      Video.findByIdAndUpdate(
-        video._id,
-        {
-          status: VIDEO_STATUS.FAILED,
-          error: errorMessage
-        }
-      )
-    ]);
-    
+    // Log the error - handleJobFailure will update the job and video status
     console.error(`[Job] Failed after ${totalTime}s:`, errorMessage);
     throw err;
   } finally {
-    cleanupTempFiles(videoId);
+    // Cleanup temp files, but don't let cleanup errors crash the job
+    try {
+      await cleanupTempFiles(videoId);
+    } catch (cleanupError) {
+      console.error(`[Job] Cleanup failed for video ${videoId}:`, cleanupError.message);
+      // Continue even if cleanup fails
+    }
   }
 };
 

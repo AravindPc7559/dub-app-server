@@ -415,6 +415,77 @@ const videoController = {
       console.error('Download video error:', error);
       return sendError(res, error.message || 'Failed to download video', 500);
     }
+  },
+
+  retryVideo: async (req, res) => {
+    try {
+      const { videoId } = req.params;
+      const user = req.user;
+
+      // Find the video and verify ownership
+      const video = await Video.findOne({
+        _id: videoId,
+        userId: user._id
+      });
+
+      if (!video) {
+        return sendError(res, 'Video not found or access denied', 404);
+      }
+
+      // Check if video is in FAILED status
+      if (video.status !== 'FAILED') {
+        return sendError(res, 'Video is not in failed status. Only failed videos can be retried.', 400);
+      }
+
+      // Check retry count (max 3 retries)
+      const MAX_RETRIES = 3;
+      if (video.retryCount >= MAX_RETRIES) {
+        return sendError(
+          res,
+          `Maximum retry limit reached (${MAX_RETRIES} retries). This video has been permanently marked as failed.`,
+          400
+        );
+      }
+
+      // Check if original video still exists in R2
+      if (!video.inputVideo?.s3Key) {
+        return sendError(res, 'Original video not found. Cannot retry processing.', 404);
+      }
+
+      // Increment retry count
+      video.retryCount = (video.retryCount || 0) + 1;
+      
+      // Reset video status and clear error
+      video.status = variables.PENDING;
+      video.error = null;
+      await video.save();
+
+      // Delete any existing failed jobs for this video
+      await Job.deleteMany({
+        videoId: video._id,
+        status: 'FAILED'
+      });
+
+      // Create a new job for retry
+      await createJob(variables.VIDEO_PROCESS, video._id, user._id);
+
+      return sendSuccess(
+        res,
+        'Video retry initiated successfully',
+        {
+          videoId: video._id,
+          retryCount: video.retryCount,
+          maxRetries: MAX_RETRIES,
+          status: video.status,
+          message: video.retryCount < MAX_RETRIES 
+            ? `Retry ${video.retryCount} of ${MAX_RETRIES}. Video processing has been restarted.`
+            : 'This is the final retry attempt.'
+        }
+      );
+    } catch (error) {
+      console.error('Retry video error:', error);
+      return sendError(res, error.message || 'Failed to retry video processing', 500);
+    }
   }
 };
 
