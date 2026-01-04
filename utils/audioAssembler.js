@@ -7,6 +7,7 @@ const {
   createSilenceFile,
   getAudioDuration,
   adjustAudioSpeed,
+  normalizeAndEnhanceAudio,
 } = require('./audioUtils');
 
 const buildFinalAudio = async (userId, videoId, rawSegments) => {
@@ -113,17 +114,28 @@ const buildFinalAudio = async (userId, videoId, rawSegments) => {
 
   fs.writeFileSync(concatFile, concatLines.join('\n'), 'utf8');
 
+  const finalAudioRaw = path.join(ttsDir, 'final_dub_audio_raw.wav');
   const finalAudio = path.join(ttsDir, 'final_dub_audio.wav');
   const concatFileAbs = path.resolve(concatFile);
-  const ffmpegCmd = `ffmpeg -y -f concat -safe 0 -i "${concatFileAbs}" -c:a pcm_s16le -ar ${SAMPLE_RATE} -ac 2 "${finalAudio}"`;
-
+  
+  // First, concatenate all segments
+  const ffmpegCmd = `ffmpeg -y -f concat -safe 0 -i "${concatFileAbs}" -c:a pcm_s16le -ar ${SAMPLE_RATE} -ac 2 "${finalAudioRaw}"`;
   execSync(ffmpegCmd, { stdio: 'inherit' });
 
-  if (!fs.existsSync(finalAudio)) {
+  if (!fs.existsSync(finalAudioRaw)) {
     throw new Error("Final audio file was not created");
   }
 
-  console.log(`[Audio] Assembled final audio: ${finalAudio}`);
+  // Apply normalization and enhancement for more natural sound
+  console.log(`[Audio] Applying audio enhancement...`);
+  normalizeAndEnhanceAudio(finalAudioRaw, finalAudio);
+  
+  // Clean up raw file
+  if (fs.existsSync(finalAudioRaw)) {
+    fs.unlinkSync(finalAudioRaw);
+  }
+
+  console.log(`[Audio] Assembled and enhanced final audio: ${finalAudio}`);
 
   const uploadResult = await uploadFileFromBuffer(
     fs.readFileSync(finalAudio),

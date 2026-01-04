@@ -190,11 +190,12 @@ CURRENT SITUATION:
 REQUIREMENTS:
 1. Expand the text to be approximately ${Math.round(expansionRatio * 100)}% longer
 2. Keep the SAME meaning and emotion
-3. Make it sound natural and conversational
-4. Add descriptive words, phrases, or slight elaborations
+3. Make it sound natural and conversational - like a real person speaking
+4. Add descriptive words, phrases, or slight elaborations naturally
 5. Maintain the same emotion: ${segment.emotion || 'neutral'}
 6. Keep the same style and tone
-7. Add natural pauses with <break time='Xms'/> tags where appropriate
+7. Add natural pauses with <break time='Xms'/> tags at commas (150-250ms), periods (300-500ms), and natural breathing points
+8. Use subtle prosody variations - don't overdo it
 
 EXAMPLES:
 - "Hello" → "Hello there, <break time='100ms'/> how are you doing?"

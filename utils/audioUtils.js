@@ -99,10 +99,44 @@ async function adjustAudioSpeed(inputPath, outputPath, tempo) {
   return outputPath;
 }
 
+/**
+ * Normalize and enhance audio with EQ and compression for more natural sound
+ * @param {string} inputPath - Path to input audio file
+ * @param {string} outputPath - Path to output audio file
+ * @returns {string} Path to output file
+ */
+function normalizeAndEnhanceAudio(inputPath, outputPath) {
+  if (!fs.existsSync(inputPath)) {
+    throw new Error(`Input audio file not found: ${inputPath}`);
+  }
+
+  // Apply audio normalization, EQ, and subtle compression for natural sound
+  // - Normalize to -1dB peak (leaves headroom)
+  // - Subtle EQ: slight boost in mid frequencies (1-3kHz) for clarity
+  // - Subtle compression: smooth dynamics without over-compression
+  // - High-pass filter: remove low-frequency rumble below 80Hz
+  const ffmpegCmd = `ffmpeg -y -i "${inputPath}" ` +
+    `-af "highpass=f=80,` +
+    `equalizer=f=1000:width_type=h:width=1000:g=1.5,` +
+    `equalizer=f=2000:width_type=h:width=1000:g=1.2,` +
+    `acompressor=threshold=-18dB:ratio=3:attack=5:release=50,` +
+    `loudnorm=I=-16:TP=-1.5:LRA=11" ` +
+    `-ar ${SAMPLE_RATE} -ac 2 -acodec pcm_s16le "${outputPath}"`;
+  
+  execSync(ffmpegCmd, { stdio: 'pipe' });
+
+  if (!fs.existsSync(outputPath)) {
+    throw new Error(`Failed to create normalized audio file: ${outputPath}`);
+  }
+
+  return outputPath;
+}
+
 module.exports = {
   SAMPLE_RATE,
   createSilenceFile,
   getAudioDuration,
   adjustAudioSpeed,
+  normalizeAndEnhanceAudio,
 };
 

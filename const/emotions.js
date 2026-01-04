@@ -2,12 +2,12 @@ const ALLOWED_EMOTIONS = ['neutral', 'serious', 'happy', 'sad', 'angry', 'excite
 
 const EMOTION_MAP = {
   neutral:  { style: "general",  rate: "0%",  pitch: "0%" },
-  serious:  { style: "serious",  rate: "-3%", pitch: "-3%" },
-  happy:    { style: "cheerful", rate: "+10%", pitch: "+8%" },
-  excited:  { style: "excited",  rate: "+12%", pitch: "+10%" },
-  calm:     { style: "calm",     rate: "-5%", pitch: "-2%" },
-  sad:      { style: "sad",      rate: "-10%", pitch: "-6%" },
-  angry:    { style: "angry",    rate: "+5%", pitch: "+12%" }
+  serious:  { style: "serious",  rate: "-2%", pitch: "-2%" },
+  happy:    { style: "cheerful", rate: "+3%", pitch: "+3%" },
+  excited:  { style: "excited",  rate: "+5%", pitch: "+4%" },
+  calm:     { style: "calm",     rate: "-3%", pitch: "-1%" },
+  sad:      { style: "sad",      rate: "-5%", pitch: "-3%" },
+  angry:    { style: "angry",    rate: "+3%", pitch: "+5%" }
 }
 
 module.exports = {

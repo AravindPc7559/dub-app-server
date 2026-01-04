@@ -17,17 +17,9 @@ function buildSSML({ text, emotion, language = "hi-IN", voice, duration }) {
   // DO NOT use duration tag - it causes unnatural slowdown
   // Instead, rely on natural text length and break tags
   
-  const getNaturalValue = (value) => {
-    if (value === "0%") return "0%";
-    const num = parseInt(value);
-    if (num > 5) return "+3%";
-    if (num < -5) return "-3%";
-    if (Math.abs(num) <= 3) return value;
-    return num > 0 ? "+2%" : "-2%";
-  };
-  
-  const naturalRate = getNaturalValue(config.rate);
-  const naturalPitch = getNaturalValue(config.pitch);
+  // Keep prosody values subtle and natural - emotions are already mapped with realistic values
+  const naturalRate = config.rate;
+  const naturalPitch = config.pitch;
 
   return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${language}">
   <voice name="${voice}">
@@ -56,7 +48,7 @@ function generateAzureTTSBuffer({ ssml }) {
     );
 
     speechConfig.speechSynthesisOutputFormat =
-      sdk.SpeechSynthesisOutputFormat.Riff44100Hz16BitMonoPcm;
+      sdk.SpeechSynthesisOutputFormat.Riff44100Hz16BitStereoPcm;
 
     const audioConfig = sdk.AudioConfig.fromAudioFileOutput(tempFile);
     const synthesizer = new sdk.SpeechSynthesizer(speechConfig, audioConfig);

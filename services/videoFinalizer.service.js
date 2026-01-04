@@ -41,9 +41,16 @@ export async function finalizeVideo(userId, videoId, inputVideoKey) {
       throw new Error("Background audio not found");
   }
 
-    console.log(`[Finalize] Mixing audio (background volume: 0.5)`);
+    console.log(`[Finalize] Mixing audio (background volume: 0.4, with normalization)`);
+  // Mix audio with better balance and normalization
+  // - Background at 40% volume for better clarity of dubbed audio
+  // - Normalize the mix to prevent clipping
+  // - Use crossfade to smooth transitions
   execSync(
-      `ffmpeg -y -i "${finalDubAudio}" -i "${backgroundAudio}" -filter_complex "[1:a]volume=0.5[bg];[0:a][bg]amix=inputs=2:dropout_transition=0" -c:a pcm_s16le -ar 44100 -ac 2 "${mixedAudioPath}"`,
+      `ffmpeg -y -i "${finalDubAudio}" -i "${backgroundAudio}" ` +
+      `-filter_complex "[1:a]volume=0.4,highpass=f=60[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2,` +
+      `loudnorm=I=-16:TP=-1.5:LRA=11" ` +
+      `-c:a pcm_s16le -ar 44100 -ac 2 "${mixedAudioPath}"`,
     { stdio: "inherit" }
   );  
 
