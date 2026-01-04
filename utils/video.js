@@ -73,8 +73,38 @@ const getAudioDuration = (audioFilePath) => {
   });
 };
 
+/**
+ * Format time for SRT subtitle format (HH:MM:SS,mmm)
+ * @param {number} seconds - Time in seconds
+ * @returns {string} Formatted time string
+ */
+const formatSRTTime = (seconds) => {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  const milliseconds = Math.floor((seconds % 1) * 1000);
+  
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
+};
+
+/**
+ * Format time for WebVTT subtitle format (HH:MM:SS.mmm)
+ * @param {number} seconds - Time in seconds
+ * @returns {string} Formatted time string
+ */
+const formatVTTTime = (seconds) => {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  const milliseconds = Math.floor((seconds % 1) * 1000);
+  
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
+};
+
 module.exports = {
   getVideoDuration,
   getAudioDuration,
+  formatSRTTime,
+  formatVTTTime,
 };
 

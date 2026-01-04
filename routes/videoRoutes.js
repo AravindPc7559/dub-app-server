@@ -6,5 +6,8 @@ const videoController = require('../controllers/videoController');
 
 router.post('/', authenticate, uploadMiddleware.single('video'), videoController.uploadVideo);
 router.get('/videos/:userId', authenticate, videoController.getVideos)
+router.get('/subtitles/:videoId', authenticate, videoController.getSubtitles)
+router.get('/audio/:videoId', authenticate, videoController.downloadAudio)
+router.delete('/:videoId', authenticate, videoController.deleteVideo)
 
 module.exports = router;

@@ -1,10 +1,11 @@
-const { uploadFile } = require('../utils/r2');
+const { uploadFile, getFile, deleteFile, deleteMultipleFiles, listFiles } = require('../utils/r2');
 const { sendSuccess, sendError } = require('../utils/response');
 const variables = require('../const/variables');
-const { getVideoDuration } = require('../utils/video');
-const { Video } = require('../models');
+const { getVideoDuration, formatSRTTime, formatVTTTime } = require('../utils/video');
+const { Video, Job } = require('../models');
 const { createJob } = require('../jobs/jobCreator');
 const { default: mongoose } = require('mongoose');
+const { streamToBuffer } = require('../utils/videoJob.utils');
 
 const videoController = {
   uploadVideo: async (req, res) => {
@@ -109,6 +110,227 @@ const videoController = {
       )
     } catch (error) {
       return sendError(res, error.message, 500)
+    }
+  },
+
+  getSubtitles: async (req, res) => {
+    try {
+      const { videoId } = req.params
+      const { format = 'json' } = req.query; // Accept format: json, srt, vtt
+      
+      const video = await Video.findById(videoId)
+      if(!video) {
+        return sendError(res, 'Video not found', 404)
+      }
+      
+      // Format subtitles to only include start, end, and text
+      const formattedSubtitles = (video.subTitles || []).map(subtitle => ({
+        start: subtitle.start,
+        end: subtitle.end,
+        text: subtitle.text
+      }))
+
+      // If no subtitles, return error
+      if (formattedSubtitles.length === 0) {
+        return sendError(res, 'No subtitles found for this video', 404)
+      }
+
+      // Convert to requested format
+      let content = '';
+      let filename = `subtitles_${videoId}`;
+      let contentType = 'application/json';
+
+      switch (format.toLowerCase()) {
+        case 'srt':
+          // Convert to SRT format
+          content = formattedSubtitles.map((sub, index) => {
+            const startTime = formatSRTTime(sub.start);
+            const endTime = formatSRTTime(sub.end);
+            return `${index + 1}\n${startTime} --> ${endTime}\n${sub.text}\n`;
+          }).join('\n');
+          filename += '.srt';
+          contentType = 'text/srt';
+          break;
+
+        case 'vtt':
+          // Convert to WebVTT format
+          content = 'WEBVTT\n\n';
+          content += formattedSubtitles.map((sub) => {
+            const startTime = formatVTTTime(sub.start);
+            const endTime = formatVTTTime(sub.end);
+            return `${startTime} --> ${endTime}\n${sub.text}\n`;
+          }).join('\n');
+          filename += '.vtt';
+          contentType = 'text/vtt';
+          break;
+
+        case 'json':
+        default:
+          // Return JSON format
+          content = JSON.stringify(formattedSubtitles, null, 2);
+          filename += '.json';
+          contentType = 'application/json';
+          break;
+      }
+
+      // Set headers for file download
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', Buffer.byteLength(content, 'utf8'));
+      
+      return res.send(content);
+    } catch (error) {
+      return sendError(res, error.message, 500)
+    }
+  },
+
+  deleteVideo: async (req, res) => {
+    try {
+      const { videoId } = req.params;
+      const user = req.user;
+
+      // Find the video and verify ownership
+      const video = await Video.findOne({
+        _id: videoId,
+        userId: user._id
+      });
+
+      if (!video) {
+        return sendError(res, 'Video not found or access denied', 404);
+      }
+
+      // Collect all R2 keys from the video document
+      const r2KeysToDelete = [];
+
+      // Original video
+      if (video.inputVideo?.s3Key) {
+        r2KeysToDelete.push(video.inputVideo.s3Key);
+      }
+
+      // Audio files
+      if (video.audio?.original) r2KeysToDelete.push(video.audio.original);
+      if (video.audio?.voice) r2KeysToDelete.push(video.audio.voice);
+      if (video.audio?.background) r2KeysToDelete.push(video.audio.background);
+      if (video.audio?.tts) r2KeysToDelete.push(video.audio.tts);
+
+      // AI files
+      if (video.ai?.rewrittenScript) r2KeysToDelete.push(video.ai.rewrittenScript);
+
+      // Output video
+      if (video.outputVideo?.s3Key) {
+        r2KeysToDelete.push(video.outputVideo.s3Key);
+      }
+
+      // List and delete all files in video-related directories
+      const directoriesToClean = [
+        `extracted-audio/${user._id}/${videoId}`,
+        `scripts/${user._id}/${videoId}`,
+        `tts-audio/${user._id}/${videoId}`,
+        `dubbed/${user._id}/${videoId}`,
+        `completed/${user._id}/${videoId}`
+      ];
+
+      // Get all files from directories
+      for (const directory of directoriesToClean) {
+        try {
+          const files = await listFiles(directory);
+          files.forEach(file => {
+            if (file.Key) {
+              r2KeysToDelete.push(file.Key);
+            }
+          });
+        } catch (error) {
+          // Directory might not exist, continue
+          console.log(`Directory ${directory} not found or empty:`, error.message);
+        }
+      }
+
+      // Remove duplicates and null/undefined values
+      const uniqueKeys = [...new Set(r2KeysToDelete.filter(key => key))];
+
+      // Delete all R2 files
+      if (uniqueKeys.length > 0) {
+        try {
+          await deleteMultipleFiles(uniqueKeys);
+          console.log(`Deleted ${uniqueKeys.length} R2 files for video ${videoId}`);
+        } catch (error) {
+          console.error(`Error deleting some R2 files:`, error.message);
+          // Continue with database deletion even if some files fail
+        }
+      }
+
+      // Delete all related jobs
+      const deleteJobsResult = await Job.deleteMany({ videoId: video._id });
+      console.log(`Deleted ${deleteJobsResult.deletedCount} jobs for video ${videoId}`);
+
+      // Delete the video document
+      await Video.findByIdAndDelete(video._id);
+
+      return sendSuccess(
+        res,
+        'Video and all related files deleted successfully',
+        {
+          videoId: video._id,
+          deletedFiles: uniqueKeys.length,
+          deletedJobs: deleteJobsResult.deletedCount
+        }
+      );
+    } catch (error) {
+      console.error('Error deleting video:', error);
+      return sendError(res, error.message || 'Failed to delete video', 500);
+    }
+  },
+
+  downloadAudio: async (req, res) => {
+    try {
+      const { videoId } = req.params;
+      const user = req.user;
+
+      // Find the video and verify ownership
+      const video = await Video.findOne({
+        _id: videoId,
+        userId: user._id
+      });
+
+      if (!video) {
+        return sendError(res, 'Video not found or access denied', 404);
+      }
+
+      // Check if final audio exists
+      if (!video.audio?.tts) {
+        return sendError(res, 'Final audio not available for this video', 404);
+      }
+
+      // Fetch file from R2
+      const fileResponse = await getFile(video.audio.tts);
+      
+      if (!fileResponse || !fileResponse.Body) {
+        return sendError(res, 'Audio file not found in R2', 404);
+      }
+
+      // Convert stream to buffer
+      const fileBuffer = await streamToBuffer(fileResponse.Body);
+
+      // Extract filename from key or use default
+      const keyParts = video.audio.tts.split('/');
+      const fileName = keyParts[keyParts.length - 1] || `final_audio_${videoId}.wav`;
+      
+      // Get content type from R2 metadata or infer from key
+      const contentType = fileResponse.ContentType || 
+        (video.audio.tts.endsWith('.wav') ? 'audio/wav' : 
+         video.audio.tts.endsWith('.mp3') ? 'audio/mpeg' : 
+         'audio/wav');
+
+      // Set headers to force download
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Length', fileBuffer.length);
+
+      // Send file
+      res.send(fileBuffer);
+    } catch (error) {
+      console.error('Download audio error:', error);
+      return sendError(res, error.message || 'Failed to download audio', 500);
     }
   }
 };
