@@ -93,6 +93,16 @@ const videoSchema = new mongoose.Schema({
       default: null,
     },
   },
+  thumbnail: {
+    s3Key: {
+      type: String,
+      default: null,
+    },
+    url: {
+      type: String,
+      default: null,
+    },
+  },
   subTitles: [
     {
       start: Number,

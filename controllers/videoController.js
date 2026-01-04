@@ -1,7 +1,7 @@
-const { uploadFile, getFile, deleteFile, deleteMultipleFiles, listFiles } = require('../utils/r2');
+const { uploadFile, uploadFileFromBuffer, getFile, deleteFile, deleteMultipleFiles, listFiles } = require('../utils/r2');
 const { sendSuccess, sendError } = require('../utils/response');
 const variables = require('../const/variables');
-const { getVideoDuration, formatSRTTime, formatVTTTime } = require('../utils/video');
+const { getVideoDuration, formatSRTTime, formatVTTTime, extractThumbnail } = require('../utils/video');
 const { Video, Job } = require('../models');
 const { createJob } = require('../jobs/jobCreator');
 const { default: mongoose } = require('mongoose');
@@ -40,6 +40,7 @@ const videoController = {
         return sendError(res, 'Failed to upload video', 500);
       }
 
+      // Create video document first to get videoId
       const video = await Video.create({
         userId: user._id,
         inputVideo: {
@@ -55,6 +56,29 @@ const videoController = {
 
       if(!video) {
         return sendError(res, 'Failed to create video', 500);
+      }
+
+      // Extract and upload thumbnail
+      try {
+        const thumbnailBuffer = await extractThumbnail(req.file.buffer, 1); // Extract frame at 1 second
+        const thumbnailDirectory = `thumbnail/${user._id}/${video._id}`;
+        const thumbnailUploadResult = await uploadFileFromBuffer(
+          thumbnailBuffer,
+          'image/jpeg',
+          thumbnailDirectory,
+          'thumbnail'
+        );
+
+        // Update video with thumbnail URL
+        video.thumbnail = {
+          s3Key: thumbnailUploadResult.key,
+          url: thumbnailUploadResult.url,
+        };
+        await video.save();
+      } catch (thumbnailError) {
+        // Log error but don't fail the upload if thumbnail extraction fails
+        console.error('Thumbnail extraction failed:', thumbnailError.message);
+        // Continue without thumbnail
       }
 
       await createJob(variables.VIDEO_PROCESS, video?._id, user?._id)
@@ -216,6 +240,11 @@ const videoController = {
       // AI files
       if (video.ai?.rewrittenScript) r2KeysToDelete.push(video.ai.rewrittenScript);
 
+      // Thumbnail
+      if (video.thumbnail?.s3Key) {
+        r2KeysToDelete.push(video.thumbnail.s3Key);
+      }
+
       // Output video
       if (video.outputVideo?.s3Key) {
         r2KeysToDelete.push(video.outputVideo.s3Key);
@@ -227,7 +256,8 @@ const videoController = {
         `scripts/${user._id}/${videoId}`,
         `tts-audio/${user._id}/${videoId}`,
         `dubbed/${user._id}/${videoId}`,
-        `completed/${user._id}/${videoId}`
+        `completed/${user._id}/${videoId}`,
+        `thumbnail/${user._id}/${videoId}`
       ];
 
       // Get all files from directories

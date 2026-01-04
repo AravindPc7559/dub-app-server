@@ -2,6 +2,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const { Readable } = require('stream');
 const fs = require('fs');
+const path = require('path');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -101,10 +102,79 @@ const formatVTTTime = (seconds) => {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
 };
 
+/**
+ * Extract a thumbnail frame from video buffer
+ * @param {Buffer} videoBuffer - Video file buffer
+ * @param {number} timestamp - Timestamp in seconds to extract frame (default: 1 second)
+ * @returns {Promise<Buffer>} Thumbnail image buffer (JPEG)
+ */
+const extractThumbnail = (videoBuffer, timestamp = 1) => {
+  return new Promise((resolve, reject) => {
+    const tempDir = path.join(__dirname, '../tmp');
+    const tempVideoPath = path.join(tempDir, `temp_video_${Date.now()}_${Math.random().toString(36).substring(7)}.mp4`);
+    const thumbnailPath = path.join(tempDir, `thumbnail_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`);
+    
+    // Ensure temp directory exists
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+
+    let timeout;
+    const timeoutDuration = 30000; // 30 seconds
+    
+    const cleanup = () => {
+      if (fs.existsSync(tempVideoPath)) {
+        try { fs.unlinkSync(tempVideoPath); } catch (e) {}
+      }
+      if (fs.existsSync(thumbnailPath)) {
+        try { fs.unlinkSync(thumbnailPath); } catch (e) {}
+      }
+    };
+
+    timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('Thumbnail extraction timed out'));
+    }, timeoutDuration);
+
+    // Write video buffer to temp file
+    fs.writeFileSync(tempVideoPath, videoBuffer);
+
+    // Extract thumbnail using ffmpeg
+    ffmpeg(tempVideoPath)
+      .seekInput(timestamp)
+      .frames(1)
+      .size('1280x720')
+      .output(thumbnailPath)
+      .on('end', () => {
+        clearTimeout(timeout);
+        try {
+          if (fs.existsSync(thumbnailPath)) {
+            const thumbnailBuffer = fs.readFileSync(thumbnailPath);
+            cleanup();
+            resolve(thumbnailBuffer);
+          } else {
+            cleanup();
+            reject(new Error('Thumbnail file was not created'));
+          }
+        } catch (error) {
+          cleanup();
+          reject(new Error(`Failed to read thumbnail: ${error.message}`));
+        }
+      })
+      .on('error', (err) => {
+        clearTimeout(timeout);
+        cleanup();
+        reject(new Error(`Thumbnail extraction failed: ${err.message}`));
+      })
+      .run();
+  });
+};
+
 module.exports = {
   getVideoDuration,
   getAudioDuration,
   formatSRTTime,
   formatVTTTime,
+  extractThumbnail,
 };
 
