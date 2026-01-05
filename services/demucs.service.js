@@ -2,10 +2,14 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const DEMUCS_BIN = path.resolve(
+const DEMUCS_BIN_PATH = path.resolve(
   __dirname,
   '../tools/demucs-env/bin/demucs'
 );
+
+const DEMUCS_BIN = fs.existsSync(DEMUCS_BIN_PATH) 
+  ? DEMUCS_BIN_PATH 
+  : 'demucs';
 
 /**
  * Run Demucs to separate vocals and background from audio

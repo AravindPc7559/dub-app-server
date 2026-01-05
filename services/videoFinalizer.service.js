@@ -1,7 +1,7 @@
-import fs from "fs";
-import path from "path";
-import { execSync } from "child_process";
-import { getFile, uploadFileFromBuffer } from "../utils/r2.js";
+const fs = require("fs");
+const path = require("path");
+const { execSync } = require("child_process");
+const { getFile, uploadFileFromBuffer } = require("../utils/r2");
 
 const saveStreamToFile = async (stream, outputPath) => {
   try {
@@ -17,7 +17,7 @@ const saveStreamToFile = async (stream, outputPath) => {
   }
 };
 
-export async function finalizeVideo(userId, videoId, inputVideoKey) {
+async function finalizeVideo(userId, videoId, inputVideoKey) {
   try {
     const id = String(videoId);
   const finalDir = path.join("tmp", "final", id);
@@ -73,3 +73,7 @@ export async function finalizeVideo(userId, videoId, inputVideoKey) {
     throw new Error(error);
   }
 }
+
+module.exports = {
+  finalizeVideo,
+};

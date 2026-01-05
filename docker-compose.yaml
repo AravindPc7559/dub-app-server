@@ -1,0 +1,37 @@
+services:
+  mongodb:
+    image: mongo:latest
+    volumes:
+      - mongodb_data:/data/db
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: dub-app
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./tmp:/app/tmp
+    depends_on:
+      - mongodb
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - .env
+    volumes:
+      - ./tmp:/app/tmp
+    depends_on:
+      - mongodb
+      - api
+
+volumes:
+  mongodb_data:
