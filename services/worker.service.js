@@ -1,7 +1,13 @@
 const { processJob } = require('../jobs/jobProcessor');
 const { Job, Video } = require('../models');
+const mongoose = require('mongoose');
 const { LOCK_TIMEOUT, POLL_INTERVAL, JOB_STATUS, VIDEO_STATUS } = require('../const/worker.constants');
 const { sleep, updateVideoStatus, handleJobFailure, handleJobSuccess } = require('../utils/worker.utils');
+
+// Check if MongoDB connection is ready
+const isMongoConnected = () => {
+  return mongoose.connection.readyState === 1; // 1 = connected
+};
 
 const startWorker = async () => {
   console.log('Worker started');
@@ -10,6 +16,13 @@ const startWorker = async () => {
     let job = null;
     
     try {
+      // Check MongoDB connection before processing
+      if (!isMongoConnected()) {
+        console.warn('MongoDB not connected. Waiting for connection...');
+        await sleep(5000); // Wait 5 seconds before retrying
+        continue;
+      }
+
       // Atomically lock and fetch a pending job
       job = await Job.findOneAndUpdate(
       {
@@ -55,6 +68,38 @@ const startWorker = async () => {
       await handleJobSuccess(job);
       
     } catch (err) {
+      // Check if it's a MongoDB connection error
+      const isMongoError = err.name === 'MongoNetworkError' || 
+                          err.name === 'MongoNetworkTimeoutError' ||
+                          err.name === 'MongoServerSelectionError' ||
+                          err.name === 'PoolClearedOnNetworkError' ||
+                          (err.message && (
+                            err.message.includes('connection') ||
+                            err.message.includes('timeout') ||
+                            err.message.includes('network')
+                          ));
+
+      if (isMongoError) {
+        console.error('MongoDB connection error detected:', err.message);
+        console.log('Waiting for MongoDB connection to recover...');
+        
+        // Wait longer for MongoDB to recover
+        await sleep(5000);
+        
+        // Try to reconnect if connection is lost
+        if (!isMongoConnected()) {
+          try {
+            await mongoose.connection.close();
+            // Reconnect will be handled by the connection event handlers
+            console.log('Attempting to reconnect to MongoDB...');
+          } catch (reconnectError) {
+            console.error('Error during reconnection attempt:', reconnectError.message);
+          }
+          await sleep(5000);
+        }
+        continue; // Skip to next iteration without processing job
+      }
+
       console.error('Job processing error:', err);
       
       if (job) {
