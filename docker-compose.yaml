@@ -6,7 +6,7 @@ services:
     ports:
       - "27017:27017"
     environment:
-      MONGO_INITDB_DATABASE: dub-app
+      MONGO_INITDB_DATABASE: dubly
 
   api:
     build:
@@ -25,8 +25,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker
+      args:
+        ENABLE_DEMUCS: ${ENABLE_DEMUCS:-true}  # Default to true if not set
     env_file:
       - .env
+    environment:
+      - ENABLE_DEMUCS=${ENABLE_DEMUCS:-true}  # Runtime env var, default to true
     volumes:
       - ./tmp:/app/tmp
     depends_on:

@@ -6,7 +6,11 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install demucs --break-system-packages
+# Conditionally install demucs based on ENABLE_DEMUCS environment variable
+ARG ENABLE_DEMUCS=true
+RUN if [ "$ENABLE_DEMUCS" = "true" ]; then \
+        pip3 install demucs --break-system-packages; \
+    fi
 
 WORKDIR /app
 

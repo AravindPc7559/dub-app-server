@@ -97,7 +97,20 @@ const downloadVideo = async (s3Key) => {
 const processAudioSeparation = async (audioFilePath, demucsOutputDir) => {
   const { getAudioDuration } = require('./video');
   const MIN_AUDIO_DURATION = 1.0;
+  const ENABLE_DEMUCS = process.env.ENABLE_DEMUCS !== 'false'; // Default to true if not set
 
+  // If demucs is disabled, return original audio as vocals (no background separation)
+  if (!ENABLE_DEMUCS) {
+    console.log('[Audio Separation] Demucs disabled, using original audio directly');
+    const originalBuffer = fs.readFileSync(audioFilePath);
+    // Return original audio as vocals, no background separation
+    return {
+      vocalsBuffer: originalBuffer,
+      backgroundBuffer: null, // No background separation when demucs is disabled
+    };
+  }
+
+  // Demucs is enabled - proceed with separation
   try {
     const duration = await getAudioDuration(audioFilePath);
     if (duration && duration < MIN_AUDIO_DURATION) {
@@ -114,11 +127,21 @@ const processAudioSeparation = async (audioFilePath, demucsOutputDir) => {
 const uploadAudioFiles = async (originalBuffer, vocalsBuffer, backgroundBuffer, userId, videoId) => {
   try {
     const audioDir = `extracted-audio/${userId}/${videoId}`;
-    const [originalAudio, vocalsAudio, backgroundAudio] = await Promise.all([
+    const uploadPromises = [
       uploadFileFromBuffer(originalBuffer, 'audio/wav', audioDir, 'original'),
       uploadFileFromBuffer(vocalsBuffer, 'audio/mpeg', audioDir, 'vocals'),
-      uploadFileFromBuffer(backgroundBuffer, 'audio/mpeg', audioDir, 'background')
-    ]);
+    ];
+
+    // Only upload background if it exists (demucs enabled)
+    if (backgroundBuffer) {
+      uploadPromises.push(
+        uploadFileFromBuffer(backgroundBuffer, 'audio/mpeg', audioDir, 'background')
+      );
+    } else {
+      uploadPromises.push(Promise.resolve(null)); // No background audio
+    }
+
+    const [originalAudio, vocalsAudio, backgroundAudio] = await Promise.all(uploadPromises);
     return { originalAudio, vocalsAudio, backgroundAudio };
   } catch (error) {
     throw new Error(error);
@@ -148,10 +171,14 @@ const transcribeVocalsAudio = async (vocalsBuffer, videoId, language = null) => 
 const updateVideoWithAudioKeys = async (video, uploadResults) => {
   const { originalAudio, vocalsAudio, backgroundAudio, tts } = uploadResults;
 
-  if (originalAudio?.key && vocalsAudio?.key && backgroundAudio?.key && tts.key) {
+  // Background audio is optional (only when demucs is enabled)
+  const hasRequiredAudio = originalAudio?.key && vocalsAudio?.key && tts?.key;
+  const hasBackgroundAudio = backgroundAudio?.key;
+
+  if (hasRequiredAudio) {
     video.audio.original = originalAudio.key;
     video.audio.voice = vocalsAudio.key;
-    video.audio.background = backgroundAudio.key;
+    video.audio.background = backgroundAudio?.key || null; // Can be null if demucs disabled
     video.audio.tts = tts.key;
     await video.save();
   } else {

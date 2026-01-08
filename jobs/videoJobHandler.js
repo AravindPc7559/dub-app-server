@@ -56,14 +56,19 @@ const processVideoJob = async (job) => {
     const extractTime = ((Date.now() - extractStart) / 1000).toFixed(2);
     console.log(`[Job] Audio extracted (${extractTime}s)`);
 
-    // Phase 3: Separate audio
+    // Phase 3: Separate audio (if demucs enabled)
+    const ENABLE_DEMUCS = process.env.ENABLE_DEMUCS !== 'false'; // Default to true if not set
     const separateStart = Date.now();
     const { vocalsBuffer, backgroundBuffer } = await processAudioSeparation(
       audioFilePath,
       demucsOutputDir
     );
     const separateTime = ((Date.now() - separateStart) / 1000).toFixed(2);
-    console.log(`[Job] Audio separated (${separateTime}s)`);
+    if (ENABLE_DEMUCS) {
+      console.log(`[Job] Audio separated (${separateTime}s)`);
+    } else {
+      console.log(`[Job] Using original audio directly (demucs disabled, ${separateTime}s)`);
+    }
 
     // Phase 4: Upload audio files
     const uploadStart = Date.now();

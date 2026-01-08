@@ -3,7 +3,7 @@ const indexController = {
   // Get home page
   getHome: (req, res) => {
     res.json({
-      message: 'Welcome to Dub App API',
+      message: 'Welcome to Dubly API',
       status: 'Server is running',
       timestamp: new Date().toISOString(),
       version: '1.0.0',

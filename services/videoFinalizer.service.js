@@ -32,27 +32,36 @@ async function finalizeVideo(userId, videoId, inputVideoKey) {
 
     const finalDubAudio = path.join("tmp", "tts", id, "final_dub_audio.wav");
     const backgroundAudio = path.join("tmp", "htdemucs", "htdemucs", `${id}_audio`, "no_vocals.mp3");
+    const ENABLE_DEMUCS = process.env.ENABLE_DEMUCS !== 'false'; // Default to true if not set
 
   if (!fs.existsSync(finalDubAudio)) {
     throw new Error("Final dub audio not found");
   }
 
-  if (!fs.existsSync(backgroundAudio)) {
-      throw new Error("Background audio not found");
-  }
-
-    console.log(`[Finalize] Mixing audio (background volume: 0.4, with normalization)`);
-  // Mix audio with better balance and normalization
-  // - Background at 40% volume for better clarity of dubbed audio
-  // - Normalize the mix to prevent clipping
-  // - Use crossfade to smooth transitions
-  execSync(
-      `ffmpeg -y -i "${finalDubAudio}" -i "${backgroundAudio}" ` +
-      `-filter_complex "[1:a]volume=0.4,highpass=f=60[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2,` +
-      `loudnorm=I=-16:TP=-1.5:LRA=11" ` +
+  // If demucs is disabled or background audio doesn't exist, use TTS audio directly
+  if (!ENABLE_DEMUCS || !fs.existsSync(backgroundAudio)) {
+    console.log(`[Finalize] Demucs disabled or background audio not found, using TTS audio directly`);
+    // Just normalize the TTS audio without mixing
+    execSync(
+      `ffmpeg -y -i "${finalDubAudio}" ` +
+      `-af "loudnorm=I=-16:TP=-1.5:LRA=11" ` +
       `-c:a pcm_s16le -ar 44100 -ac 2 "${mixedAudioPath}"`,
-    { stdio: "inherit" }
-  );  
+      { stdio: "inherit" }
+    );
+  } else {
+    console.log(`[Finalize] Mixing audio (background volume: 0.4, with normalization)`);
+    // Mix audio with better balance and normalization
+    // - Background at 40% volume for better clarity of dubbed audio
+    // - Normalize the mix to prevent clipping
+    // - Use crossfade to smooth transitions
+    execSync(
+        `ffmpeg -y -i "${finalDubAudio}" -i "${backgroundAudio}" ` +
+        `-filter_complex "[1:a]volume=0.4,highpass=f=60[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2,` +
+        `loudnorm=I=-16:TP=-1.5:LRA=11" ` +
+        `-c:a pcm_s16le -ar 44100 -ac 2 "${mixedAudioPath}"`,
+      { stdio: "inherit" }
+    );
+  }  
 
     console.log(`[Finalize] Replacing video audio`);
   execSync(

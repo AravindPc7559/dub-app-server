@@ -1,7 +1,7 @@
 {
-  "name": "dub-app",
+  "name": "dubly",
   "version": "1.0.0",
-  "description": "Ai dubbing app",
+  "description": "Dubly - AI dubbing app",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
