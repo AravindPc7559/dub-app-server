@@ -4,6 +4,7 @@ const variables = require('../const/variables');
 const { getVideoDuration, formatSRTTime, formatVTTTime, extractThumbnail } = require('../utils/video');
 const { Video, Job } = require('../models');
 const { createJob } = require('../jobs/jobCreator');
+const { processVideoJob } = require('../jobs/videoJobHandler');
 const { default: mongoose } = require('mongoose');
 const { streamToBuffer } = require('../utils/videoJob.utils');
 
@@ -81,20 +82,86 @@ const videoController = {
         // Continue without thumbnail
       }
 
-      await createJob(variables.VIDEO_PROCESS, video?._id, user?._id)
+      // Check if video should be processed synchronously or via job queue
+      const PROCESS_VIDEO_SYNC = process.env.PROCESS_VIDEO_SYNC === 'true';
 
-      return sendSuccess(
-        res,
-        'Video uploaded successfully',
-        {
-          key: uploadResult.key,
-          url: uploadResult.url,
-          bucket: uploadResult.bucket,
-          title: videoTitle,
-          uploadedBy: user._id,
-        },
-        201
-      );
+      if (PROCESS_VIDEO_SYNC) {
+        // Process video directly (synchronously)
+        console.log(`[Upload] Processing video ${video._id} directly (sync mode)`);
+        try {
+          // Create a minimal job-like object for direct processing
+          const mockJob = {
+            videoId: video._id,
+            userId: user._id,
+            type: variables.VIDEO_PROCESS,
+          };
+
+          // Process video directly (this will block until complete)
+          await processVideoJob(mockJob);
+
+          // Refresh video to get updated status
+          await video.populate();
+          const updatedVideo = await Video.findById(video._id);
+
+          return sendSuccess(
+            res,
+            'Video uploaded and processed successfully',
+            {
+              key: uploadResult.key,
+              url: uploadResult.url,
+              bucket: uploadResult.bucket,
+              title: videoTitle,
+              uploadedBy: user._id,
+              videoId: video._id,
+              status: updatedVideo?.status || variables.COMPLETED,
+              outputVideo: updatedVideo?.outputVideo || null,
+            },
+            201
+          );
+        } catch (processingError) {
+          console.error(`[Upload] Direct processing failed for video ${video._id}:`, processingError.message);
+          // Update video status to failed
+          video.status = variables.FAILED;
+          video.error = processingError.message;
+          await video.save();
+
+          // Still return success for upload, but indicate processing failed
+          return sendSuccess(
+            res,
+            'Video uploaded but processing failed',
+            {
+              key: uploadResult.key,
+              url: uploadResult.url,
+              bucket: uploadResult.bucket,
+              title: videoTitle,
+              uploadedBy: user._id,
+              videoId: video._id,
+              status: variables.FAILED,
+              error: processingError.message,
+            },
+            201
+          );
+        }
+      } else {
+        // Process video via job queue (asynchronous - default behavior)
+        console.log(`[Upload] Creating job for video ${video._id} (async mode)`);
+        await createJob(variables.VIDEO_PROCESS, video?._id, user?._id);
+
+        return sendSuccess(
+          res,
+          'Video uploaded successfully',
+          {
+            key: uploadResult.key,
+            url: uploadResult.url,
+            bucket: uploadResult.bucket,
+            title: videoTitle,
+            uploadedBy: user._id,
+            videoId: video._id,
+            status: variables.PENDING,
+          },
+          201
+        );
+      }
     } catch (error) {
       console.log("Error", error)
       return sendError(res, error.message, 500);
