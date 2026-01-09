@@ -65,7 +65,7 @@ const processVideoJob = async (job) => {
     );
     const separateTime = ((Date.now() - separateStart) / 1000).toFixed(2);
     if (ENABLE_DEMUCS) {
-      console.log(`[Job] Audio separated (${separateTime}s)`);
+    console.log(`[Job] Audio separated (${separateTime}s)`);
     } else {
       console.log(`[Job] Using original audio directly (demucs disabled, ${separateTime}s)`);
     }

@@ -135,7 +135,7 @@ const uploadAudioFiles = async (originalBuffer, vocalsBuffer, backgroundBuffer, 
     // Only upload background if it exists (demucs enabled)
     if (backgroundBuffer) {
       uploadPromises.push(
-        uploadFileFromBuffer(backgroundBuffer, 'audio/mpeg', audioDir, 'background')
+      uploadFileFromBuffer(backgroundBuffer, 'audio/mpeg', audioDir, 'background')
       );
     } else {
       uploadPromises.push(Promise.resolve(null)); // No background audio
